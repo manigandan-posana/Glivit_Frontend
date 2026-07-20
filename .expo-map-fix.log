@@ -1,0 +1,7 @@
+env: load .env
+env: export EXPO_PUBLIC_DEMO_MODE
+Starting project at E:\vehiclemoment\vehiclemoment
+React Compiler enabled
+Starting Metro Bundler
+Waiting on http://localhost:8084
+Logs for your project will appear below.

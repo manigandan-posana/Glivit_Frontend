@@ -20,6 +20,7 @@ expo-env.d.ts
 
 # Metro
 .metro-health-check*
+.expo-dev-server*.log
 
 # debug
 npm-debug.*
@@ -31,7 +32,9 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -41,3 +44,4 @@ app-example
 # generated native folders
 /ios
 /android
+models/model.fbx
