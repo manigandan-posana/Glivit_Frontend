@@ -18,6 +18,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as THREE from 'three';
 
 import { FleetWebMap, type WebMapMarker } from '@/src/components/FleetWebMap';
+import { env } from '@/src/config/env';
+import { useGetDevicePlaybackQuery } from '@/src/services/devicesApi';
 import { getMapStyle, getMapStyleInfo, toNativeStyle } from '@/src/services/mapStyle';
 import { isMapAvailable, MapLibre } from '@/src/services/maplibre';
 import vehiclePreview from '@/models/model.preview.json';
@@ -81,7 +83,10 @@ const BRAND = {
   road: '#fdfcf7',
 };
 
-const ROUTE: Coordinate[] = [
+// Offline / demo fallback only. Production flows use real backend playback
+// (see the useGetDevicePlaybackQuery wiring below); this array is used solely
+// when no device is selected or the app runs in demo mode.
+const DEMO_ROUTE: Coordinate[] = [
   { latitude: 12.971873, longitude: 77.594634 },
   { latitude: 12.972069, longitude: 77.594147 },
   { latitude: 12.973084, longitude: 77.59475 },
@@ -156,14 +161,31 @@ const ROUTE: Coordinate[] = [
   { latitude: 12.99318, longitude: 77.625735 },
 ];
 
-const TOTAL_DISTANCE_KM = getRouteDistance(ROUTE);
-
 export default function VehicleTrackerScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ name?: string; subtitle?: string }>();
+  const params = useLocalSearchParams<{ deviceId?: string; name?: string; subtitle?: string }>();
   const vehicleName = params.name ?? 'TN20CM7677 (VinothKumar Srinivas)';
   const vehicleSubtitle =
     params.subtitle ?? 'Kuppalamadugu, Uthukkottai, Thiruvallur, Tamil Nadu';
+
+  // Real route playback for the selected device. Falls back to the demo route
+  // only when no device is passed or the app is in offline demo mode.
+  const deviceId = params.deviceId ? Number(params.deviceId) : undefined;
+  const { data: playback } = useGetDevicePlaybackQuery(
+    { deviceId: deviceId as number },
+    { skip: env.demoMode || deviceId == null || Number.isNaN(deviceId) }
+  );
+  const route = useMemo<Coordinate[]>(() => {
+    const points = playback?.points;
+    if (points && points.length > 1) {
+      return points.map((p) => ({ latitude: p.lat, longitude: p.lng }));
+    }
+    return DEMO_ROUTE;
+  }, [playback]);
+  const totalDistanceKm = useMemo(
+    () => (playback?.distanceKm && playback.distanceKm > 0 ? playback.distanceKm : getRouteDistance(route)),
+    [playback, route]
+  );
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const mapRef = useRef<MapRef>(null);
@@ -189,7 +211,7 @@ export default function VehicleTrackerScreen() {
   const [toastText, setToastText] = useState('3D vehicle ready');
   const [vehicleScreenPoint, setVehicleScreenPoint] = useState<ScreenPoint | null>(null);
 
-  const routeSnapshot = useMemo(() => getRouteSnapshot(ROUTE, routeProgress), [routeProgress]);
+  const routeSnapshot = useMemo(() => getRouteSnapshot(route, routeProgress), [route, routeProgress]);
   const vehicleCoordinate = routeSnapshot.coordinate;
   const heading = routeSnapshot.heading;
   const completedRoute = routeSnapshot.completedRoute;
@@ -202,13 +224,13 @@ export default function VehicleTrackerScreen() {
   );
   const mapStyleUrl = useMemo(() => toNativeStyle(mapStyleInfo.style), [mapStyleInfo.style]);
   const blockingMapIssue = mapStyleInfo.issues.find((issue) => issue.blocking);
-  const routeFeature = useMemo(() => createLineFeature(ROUTE), []);
+  const routeFeature = useMemo(() => createLineFeature(route), [route]);
   const completedRouteFeature = useMemo(() => createLineFeature(completedRoute), [completedRoute]);
   const overlayPoint = vehicleScreenPoint ?? {
     x: width / 2,
     y: height * 0.52,
   };
-  const remainingDistanceKm = Math.max(TOTAL_DISTANCE_KM - routeSnapshot.distanceKm, 0);
+  const remainingDistanceKm = Math.max(totalDistanceKm - routeSnapshot.distanceKm, 0);
   const routePercent = Math.round(routeProgress * 100);
   const selectedOptionData = useMemo<RouteOptionData | null>(() => {
     if (!selectedOptionId) return null;
@@ -287,7 +309,7 @@ export default function VehicleTrackerScreen() {
         metrics: [
           { label: 'Traffic', value: isTrafficVisible ? 'Visible' : 'Hidden' },
           { label: 'Remaining', value: `${remainingDistanceKm.toFixed(1)} km` },
-          { label: 'Trip', value: `${TOTAL_DISTANCE_KM.toFixed(1)} km` },
+          { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
         ],
         summary: isTrafficVisible ? 'Traffic-colored route overlay is visible.' : 'Traffic overlay is hidden; route remains visible.',
         title: 'Traffic',
@@ -330,7 +352,7 @@ export default function VehicleTrackerScreen() {
         icon: 'history',
         metrics: [
           { label: 'Covered', value: `${routeSnapshot.distanceKm.toFixed(1)} km` },
-          { label: 'Trip', value: `${TOTAL_DISTANCE_KM.toFixed(1)} km` },
+          { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
           { label: 'Ping', value: pingTime },
         ],
         summary: 'Route history interval selector is open.',
@@ -387,7 +409,7 @@ export default function VehicleTrackerScreen() {
   }, []);
 
   const fitWholeRoute = useCallback(() => {
-    cameraRef.current?.fitBounds(getRouteBounds(ROUTE), {
+    cameraRef.current?.fitBounds(getRouteBounds(route), {
       duration: 700,
       easing: 'ease',
       padding: {
@@ -397,7 +419,7 @@ export default function VehicleTrackerScreen() {
         left: 82,
       },
     });
-  }, [insets.bottom, insets.top]);
+  }, [insets.bottom, insets.top, route]);
 
   const updateVehicleScreenPoint = useCallback(async () => {
     if (!mapRef.current) {
@@ -498,8 +520,8 @@ export default function VehicleTrackerScreen() {
     [vehicleCoordinate, heading]
   );
   const fallbackPolyline = useMemo<[number, number][]>(
-    () => ROUTE.map((c) => [c.longitude, c.latitude] as [number, number]),
-    []
+    () => route.map((c) => [c.longitude, c.latitude] as [number, number]),
+    [route]
   );
 
   useEffect(() => {
@@ -611,7 +633,7 @@ export default function VehicleTrackerScreen() {
         <Camera
           ref={cameraRef}
           initialViewState={{
-            center: toLngLat(ROUTE[20]),
+            center: toLngLat(route[Math.min(20, route.length - 1)]),
             pitch: 0,
             zoom: 12.6,
           }}
@@ -873,7 +895,7 @@ export default function VehicleTrackerScreen() {
         <View style={styles.sheetStats}>
           <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
           <Metric icon="map-marker-distance" label="Covered" value={`${routeSnapshot.distanceKm.toFixed(1)} km`} />
-          <Metric icon="flag-checkered" label="Trip" value={`${TOTAL_DISTANCE_KM.toFixed(1)} km`} />
+          <Metric icon="flag-checkered" label="Trip" value={`${totalDistanceKm.toFixed(1)} km`} />
         </View>
 
         <View style={styles.sheetActions}>
@@ -1257,7 +1279,8 @@ function getRouteBounds(route: Coordinate[]) {
 
 function getRouteSnapshot(route: Coordinate[], progress: number) {
   const clampedProgress = ((progress % 1) + 1) % 1;
-  const targetDistance = TOTAL_DISTANCE_KM * clampedProgress;
+  const routeDistance = getRouteDistance(route);
+  const targetDistance = routeDistance * clampedProgress;
   let travelled = 0;
 
   for (let index = 1; index < route.length; index += 1) {
@@ -1283,7 +1306,7 @@ function getRouteSnapshot(route: Coordinate[], progress: number) {
   return {
     completedRoute: route,
     coordinate: route[route.length - 1],
-    distanceKm: TOTAL_DISTANCE_KM,
+    distanceKm: routeDistance,
     heading: getBearing(route[route.length - 2], route[route.length - 1]),
   };
 }

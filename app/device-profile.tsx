@@ -44,7 +44,7 @@ export default function DeviceProfileScreen() {
       <Card style={styles.actions}>
         <Button
           label="Live track"
-          onPress={() => router.push({ pathname: '/live-track', params: { name: data.name, subtitle: data.address ?? '' } })}
+          onPress={() => router.push({ pathname: '/live-track', params: { deviceId: String(data.id), name: data.name, subtitle: data.address ?? '' } })}
         />
         <View style={styles.actionRow}>
           <Pressable accessibilityRole="button" disabled={!data.driverPhone} onPress={callDriver} style={styles.iconAction}>

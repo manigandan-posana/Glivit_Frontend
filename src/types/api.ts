@@ -251,3 +251,58 @@ export type AuditDto = {
   detail?: string | null;
   createdAt: string;
 };
+
+// --- Telemetry: position history & route playback (backend Stage 1) ---
+export type PositionDto = {
+  id: number;
+  deviceTime: string;
+  serverTime: string;
+  latitude: number;
+  longitude: number;
+  speed: number;
+  course: number;
+  ignition?: boolean | null;
+  gpsValid: boolean;
+  satellites?: number | null;
+  networkSignal?: number | null;
+  fuelLevel?: number | null;
+  eventType?: string | null;
+  address?: string | null;
+};
+
+export type PlaybackTrackPoint = {
+  t: string;
+  lat: number;
+  lng: number;
+  speed: number;
+  course: number;
+  ignition?: boolean | null;
+  gpsValid: boolean;
+};
+
+export type PlaybackEventMarker = {
+  t: string;
+  lat: number;
+  lng: number;
+  eventType: string;
+};
+
+export type PlaybackStopMarker = {
+  from: string;
+  to: string;
+  lat: number;
+  lng: number;
+  minutes: number;
+};
+
+export type PlaybackResponse = {
+  deviceId: number;
+  from: string;
+  to: string;
+  totalPoints: number;
+  returnedPoints: number;
+  distanceKm: number;
+  points: PlaybackTrackPoint[];
+  events: PlaybackEventMarker[];
+  stops: PlaybackStopMarker[];
+};
