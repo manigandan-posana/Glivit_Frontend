@@ -1,5 +1,23 @@
 import { baseApi, unwrap } from '@/src/services/baseApi';
-import type { ApiResponse, DeviceDetail, DeviceSummary, PageResponse } from '@/src/types/api';
+import type {
+  ApiResponse,
+  DeviceDetail,
+  DeviceSummary,
+  PageResponse,
+  PlaybackResponse,
+  PositionDto,
+} from '@/src/types/api';
+
+export type DevicePlaybackArgs = {
+  deviceId: number;
+  from?: string;
+  to?: string;
+};
+
+export type DevicePositionsArgs = DevicePlaybackArgs & {
+  page?: number;
+  size?: number;
+};
 
 export type DeviceListArgs = {
   search?: string;
@@ -68,6 +86,32 @@ export const devicesApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/devices/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Dashboard', 'Device'],
     }),
+    // Real route playback (simplified geometry + event/stop markers) that
+    // replaces the hard-coded demo route on the live-track screen.
+    getDevicePlayback: build.query<PlaybackResponse, DevicePlaybackArgs>({
+      query: ({ deviceId, from, to }) => ({
+        url: `/devices/${deviceId}/playback`,
+        params: {
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+        },
+      }),
+      transformResponse: (response: ApiResponse<PlaybackResponse>) => unwrap(response),
+      providesTags: (_result, _error, { deviceId }) => [{ type: 'Device', id: deviceId }],
+    }),
+    getDevicePositions: build.query<PageResponse<PositionDto>, DevicePositionsArgs>({
+      query: ({ deviceId, from, to, page = 0, size = 100 }) => ({
+        url: `/devices/${deviceId}/positions`,
+        params: {
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+          page,
+          size,
+        },
+      }),
+      transformResponse: (response: ApiResponse<PageResponse<PositionDto>>) => unwrap(response),
+      providesTags: (_result, _error, { deviceId }) => [{ type: 'Device', id: deviceId }],
+    }),
   }),
   overrideExisting: false,
 });
@@ -76,6 +120,8 @@ export const {
   useCreateDeviceMutation,
   useDeleteDeviceMutation,
   useGetDeviceQuery,
+  useGetDevicePlaybackQuery,
+  useGetDevicePositionsQuery,
   useGetDevicesQuery,
   useUpdateDeviceMutation,
 } = devicesApi;

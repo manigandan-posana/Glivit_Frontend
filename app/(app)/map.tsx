@@ -106,7 +106,7 @@ export default function AllVehiclesMapScreen() {
   );
 
   const openLiveTrack = (item: DeviceSummary) =>
-    router.push({ pathname: '/live-track', params: { name: item.name, subtitle: item.address ?? '' } });
+    router.push({ pathname: '/live-track', params: { deviceId: String(item.id), name: item.name, subtitle: item.address ?? '' } });
 
   return (
     <View style={styles.screen}>
