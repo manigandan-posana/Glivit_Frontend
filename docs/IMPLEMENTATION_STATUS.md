@@ -1,109 +1,190 @@
-# Vehiclemoment Tracker — Implementation Status
+# Vehiclemoment Tracker - Implementation Status
 
-## Stack decision
+## Stack Position
 
-This mobile app stays on **Expo (SDK 54, expo-router)**. The product brief names
-"React Native CLI", but the project already exists as Expo and migrating would
-recreate it; Expo Prebuild + config plugins cover the required native modules
-(MapLibre, secure storage, and later FCM/Razorpay) on both Android and iOS.
+The existing mobile project remains on Expo SDK 54 with expo-router. The brief
+names React Native CLI, but replacing the app shell would recreate the project.
+Expo Prebuild/development builds are the path for native MapLibre, SecureStore,
+FCM/APNs and payment modules.
 
-## Implemented — app shell (wired to the `glivt` backend)
+Backend remains Java Spring Boot with Spring Security JWT, JPA, MySQL, Flyway,
+OpenAPI and tenant-scoped APIs.
 
-Startup → tenant resolution → auth → authenticated area:
+## Mobile Implemented
 
-- **Startup gate** ([app/index.tsx](../app/index.tsx)) + root provider/bootstrap
-  ([app/_layout.tsx](../app/_layout.tsx)): loads persisted tenant + tokens from
-  secure storage behind the native splash (no placeholder flash), then routes by
-  state (no company code → Company Code, code but no session → Login, valid
-  session → Dashboard).
-- **Company Code** ([app/company-code.tsx](../app/company-code.tsx)): validates the
-  code against `POST /api/tenant/resolve`, caches branding, advances to Login.
-- **Login** ([app/login.tsx](../app/login.tsx)): taupe layout, tenant logo/app name,
-  username + password (visibility toggle), green full-width button with its own
-  loading state, Contact Service Provider, Forgot Password, Clear Company Code.
-  React Hook Form + Zod validation; maps backend error codes to messages.
-- **Drawer** ([app/(app)/_layout.tsx](<../app/(app)/_layout.tsx>) +
-  [src/components/AppDrawerContent.tsx](../src/components/AppDrawerContent.tsx)):
-  permission-filtered items (unauthorised items are hidden, never shown-then-denied),
-  tenant header, header refresh action, Logout (revokes server refresh tokens +
-  clears keystore).
-- **Dashboard** ([app/(app)/dashboard.tsx](<../app/(app)/dashboard.tsx>)): SVG
-  doughnut with total in the centre, tappable status cards (Running/Stopped/Idle/
-  Inactive/No Data/Expired/Total) that open the vehicle list filtered by state,
-  pull-to-refresh, loading/empty/error-retry states.
-- **Vehicle list** ([app/(app)/vehicles.tsx](<../app/(app)/vehicles.tsx>)):
-  debounced server search, state filter, incremental pagination with de-duplication,
-  pull-to-refresh, empty state.
-- **All-vehicles map** ([app/(app)/map.tsx](<../app/(app)/map.tsx>)): full-screen
-  MapLibre/Geoapify, status-coloured markers, floating controls (drawer, refresh,
-  fit-all), bottom snapping vehicle cards synced to the selected marker, tap → live
-  tracking.
-- **Live tracking** ([app/live-track.tsx](../app/live-track.tsx)): the existing
-  3D single-vehicle tracker, now reachable from the list/map with a working Back
-  action and per-vehicle title/subtitle params.
+- Startup gate, native splash hold, company-code resolution, cached branding,
+  login, secure token storage and refresh-token rotation.
+- Permission-filtered drawer with Home, vehicles, fleet map, events, geofences,
+  reports, commands, management and settings.
+- Dashboard with status doughnut, status cards, refresh/retry/empty states and
+  filtered vehicle-list navigation.
+- Vehicle list with debounced search, pagination merge de-duplication,
+  pull-to-refresh and profile navigation.
+- Device profile with current status, assignment data, live-track/report/command
+  actions and driver call action.
+- Full fleet map with MapLibre native/WebView fallback, bottom card sync,
+  fit-all and refresh controls.
+- Demo-style individual live tracking with route playback controls, speed/status
+  surfaces and robust MapLibre fallback handling.
+- Events screen with paginated events and audited acknowledge mutation.
+- Geofence screen with circle-geofence creation and persisted list.
+- Reports screen with server-side report job creation and CSV download into the
+  Expo document directory.
+- Command centre with per-button loading, idempotency keys and destructive
+  command confirmation.
+- Management hub for GPS devices, users, projects, drivers, groups and audit log.
+- Settings screen backed by `/api/settings`.
+- Demo mode handlers for every mobile endpoint above.
 
-State/data layer:
+## Backend Implemented
 
-- Redux Toolkit store + **RTK Query** ([src/services](../src/services)) with an
-  auth-header base query and **single-flight token refresh** on 401.
-- Tokens/user/branding in **expo-secure-store** (Keychain / Android Keystore).
-- Theme tokens from brief section 3 ([src/theme/tokens.ts](../src/theme/tokens.ts))
-  with tenant colour overrides; reusable UI in [src/components/ui](../src/components/ui).
+- Tenant resolution and white-label configuration.
+- Auth login/refresh/logout with JWT access token, refresh-token rotation,
+  single-session option, login rate limiting, FCM-token persistence and audit.
+- Backend permission model for Super Admin, Admin and Driver with granular flags.
+- Dashboard summary and tenant-scoped device list/profile.
+- Device create/update/soft-delete with IMEI uniqueness, tenant-owned references,
+  one active tracker per vehicle, expiry validation and audit.
+- Tenant-scoped CRUD/list APIs for users, projects, drivers and groups.
+- Events API with filtering and acknowledge audit.
+- Geofence API for circle/polygon/polyline coordinate payloads and assignment
+  validation.
+- Device command API with rate limiting, idempotency and destructive confirmation.
+- Report job API with tenant history-window enforcement and CSV content endpoint.
+- Per-user settings API.
+- Audit list API.
+- Flyway V2 migration for events, geofences, notification rules, commands,
+  reports, report schedules, fuel readings, settings, billing transactions and
+  payments.
 
-## Configuration
+## REST API List
 
-`.env` (from [.env.example](../.env.example)):
+- `POST /api/tenant/resolve`
+- `GET /api/tenant/{companyCode}/config`
+- `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
+- `GET /api/dashboard/summary`
+- `GET /api/devices`
+- `GET /api/devices/{id}`
+- `POST /api/devices`
+- `PUT /api/devices/{id}`
+- `DELETE /api/devices/{id}`
+- `GET|POST|PUT|DELETE /api/projects`
+- `GET|POST|PUT|DELETE /api/users`
+- `GET|POST|PUT|DELETE /api/drivers`
+- `GET|POST|PUT|DELETE /api/groups`
+- `GET /api/events`
+- `POST /api/events`
+- `PATCH /api/events/{id}/acknowledge`
+- `GET|POST|PUT|DELETE /api/geofences`
+- `GET /api/commands`
+- `POST /api/commands`
+- `GET /api/reports`
+- `POST /api/reports`
+- `GET /api/reports/{id}/content`
+- `GET /api/settings`
+- `PUT /api/settings`
+- `GET /api/audit`
 
-```bash
-EXPO_PUBLIC_GEOAPIFY_API_KEY=your_geoapify_key
-EXPO_PUBLIC_BACKEND_BASE_URL=https://your-api.example.com
-EXPO_PUBLIC_DEMO_MODE=true
-```
+## Environment Templates
 
-`EXPO_PUBLIC_BACKEND_BASE_URL` must point at the running `glivt` backend; the app
-calls `<base>/api/...`. Without a Geoapify key the map falls back to OpenFreeMap
-vector styles with streets, buildings, labels, and POIs.
+Frontend: `.env.example`
 
-## Maps in Expo Go vs dev build
+Backend: `../glivt/.env.example`
 
-Native MapLibre can't run in Expo Go. The map and live-track screens detect this
-(`src/services/maplibre.ts` probes the native module) and fall back to
-**MapLibre GL JS inside a WebView** ([src/components/FleetWebMap.tsx](../src/components/FleetWebMap.tsx))
-— still MapLibre + Geoapify, no Google Maps — so maps render in Expo Go. In a
-development build the native MapLibre path is used automatically. For Geoapify
-tiles set `EXPO_PUBLIC_GEOAPIFY_API_KEY`; without it the app uses detailed
-OpenFreeMap vector styles.
+Never put Geoapify, Firebase Admin, Razorpay secret, JWT secret or database
+credentials in the mobile app.
 
-## Run
+## Setup Notes
+
+Android:
+
+- Use package `com.vehiclemoment.tracker`.
+- Run `npx expo prebuild` before native builds.
+- Put `google-services.json` in the Android app after Firebase project setup.
+- Keep clear-text traffic disabled for production.
+
+iOS:
+
+- Use bundle identifier `com.vehiclemoment.tracker`.
+- Run `npx expo prebuild` before native builds.
+- Add `GoogleService-Info.plist` after Firebase project setup.
+- Configure APNs key/certificate in Firebase for push delivery.
+
+Geoapify:
+
+- Set `EXPO_PUBLIC_GEOAPIFY_API_KEY`.
+- Restrict the key by app/domain where supported.
+- Without a key, the app uses OpenFreeMap fallback styles.
+
+Razorpay:
+
+- Keep `EXPO_PUBLIC_RAZORPAY_ENABLED=false` until native SDK and backend order
+  verification are enabled.
+- Store `RAZORPAY_KEY_SECRET` only on the backend.
+- Create orders and verify signatures only on the backend.
+
+Firebase:
+
+- Store Firebase Admin credentials only on the backend.
+- Mobile config files belong in native Android/iOS projects generated by prebuild.
+- FCM/APNs notification handlers still need a native development build.
+
+## Demo Login
+
+Frontend demo mode:
+
+- `EXPO_PUBLIC_DEMO_MODE=true`
+- Company code: `DEMO`
+- Username: `admin`
+- Password: any non-empty value
+
+Backend demo seed:
+
+- `APP_SEED_DEMO=true`
+- Company code: `DEMO`
+- Users: `superadmin`, `admin`, `driver`
+- Password: `Admin@12345`
+
+## Verification
+
+- Backend: `.\mvnw.cmd test` - passed, 15 tests.
+- Frontend: `npx.cmd tsc --noEmit` - passed.
+- Frontend: `npx.cmd expo lint` - passed.
+- Frontend Android JS export: `npx.cmd expo export --platform android` - passed.
+- Backend package: `.\mvnw.cmd package -DskipTests` - passed.
+
+## Known Limitations
+
+- Native FCM/APNs handlers, Razorpay native checkout and QR/barcode camera scan
+  require Expo prebuild/dev-client integration and provider credentials.
+- WebSocket/SSE live-position streaming is not yet wired; current app uses RTK
+  Query polling/demo playback.
+- Advanced map drawing/editing for polygon and route-corridor geofences is not
+  yet an interactive map editor.
+- Report calculations currently generate a safe CSV device export foundation;
+  full route/fuel/mileage/trip calculations still need aggregation services.
+- No original APK credentials, backend URLs, package names, source code or
+  proprietary artwork were reused.
+
+## Build Commands
+
+Frontend:
 
 ```bash
 npm install
-npx expo start -c        # Expo Go: full app incl. WebView maps (demo mode on)
-
-# For native MapLibre + push/native modules, build a dev client:
+npx expo start -c
 npx expo prebuild
-npx expo run:android     # or run:ios
+npx expo run:android
+npx expo run:ios
+npx expo export --platform android
 ```
 
-## Verification (this slice)
+Backend:
 
 ```bash
-npx tsc --noEmit                       # passed
-npx expo lint                          # passed (0 problems)
-npx expo export --platform android     # JS graph bundles successfully
+.\mvnw.cmd test
+.\mvnw.cmd package
+java -jar target/glivt-0.0.1-SNAPSHOT.jar
 ```
-
-Device/emulator smoke testing was not run in this environment.
-
-## Not yet implemented (later slices)
-
-Device/user/driver/group/project CRUD, geofences, reports + downloads, notifications
-+ push (FCM), device commands, billing/Razorpay, settings/profile, live WebSocket
-updates, and the remaining drawer destinations. The drawer is structured so these
-drop in behind their permission flags.
-
-## Clean-room confirmation
-
-No APK credentials, server URLs, package identifiers, source code, map keys, or
-proprietary artwork were reused. UI is original React Native built from the written
-brief; maps use MapLibre + Geoapify (no Google Maps).

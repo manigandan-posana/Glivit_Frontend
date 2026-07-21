@@ -9,9 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.vehiclemoment.tracker",
       "supportsTablet": true
     },
     "android": {
+      "package": "com.vehiclemoment.tracker",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -22,6 +24,7 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE"
       ],
+      "usesCleartextTraffic": false,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },

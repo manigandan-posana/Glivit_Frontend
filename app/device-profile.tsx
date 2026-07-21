@@ -1,0 +1,144 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React from 'react';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Button } from '@/src/components/ui/Button';
+import { Card } from '@/src/components/ui/Card';
+import { RowCard } from '@/src/components/ui/ModulePrimitives';
+import { ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
+import { StatusPill } from '@/src/components/ui/StatusPill';
+import { apiErrorMessage } from '@/src/services/apiError';
+import { useGetDeviceQuery } from '@/src/services/devicesApi';
+import { palette, spacing, typography } from '@/src/theme/tokens';
+
+export default function DeviceProfileScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ id?: string }>();
+  const id = Number(params.id);
+  const { data, isLoading, isError, error, refetch } = useGetDeviceQuery(id, { skip: !Number.isFinite(id) });
+
+  if (isLoading) return <LoadingView label="Loading device profile..." />;
+  if (isError || !data) return <ErrorRetryView message={apiErrorMessage(error)} onRetry={refetch} />;
+
+  const callDriver = () => {
+    if (data.driverPhone) Linking.openURL(`tel:${data.driverPhone}`).catch(() => undefined);
+  };
+
+  return (
+    <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.back}>
+          <MaterialCommunityIcons color={palette.white} name="arrow-left" size={24} />
+        </Pressable>
+        <View style={styles.vehicleIcon}>
+          <MaterialCommunityIcons color={palette.white} name="car-connected" size={40} />
+        </View>
+        <Text numberOfLines={1} style={styles.name}>{data.name}</Text>
+        <Text numberOfLines={1} style={styles.subtitle}>IMEI {data.imei} | {data.model ?? data.category}</Text>
+        <StatusPill state={data.state} />
+      </View>
+
+      <Card style={styles.actions}>
+        <Button
+          label="Live track"
+          onPress={() => router.push({ pathname: '/live-track', params: { name: data.name, subtitle: data.address ?? '' } })}
+        />
+        <View style={styles.actionRow}>
+          <Pressable accessibilityRole="button" disabled={!data.driverPhone} onPress={callDriver} style={styles.iconAction}>
+            <MaterialCommunityIcons color={data.driverPhone ? palette.primaryGreen : palette.textSecondary} name="phone" size={22} />
+            <Text style={styles.iconActionText}>Call</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => router.push('/reports' as never)} style={styles.iconAction}>
+            <MaterialCommunityIcons color={palette.blue} name="file-chart-outline" size={22} />
+            <Text style={styles.iconActionText}>Reports</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => router.push('/commands' as never)} style={styles.iconAction}>
+            <MaterialCommunityIcons color={palette.warningOrange} name="console-line" size={22} />
+            <Text style={styles.iconActionText}>Commands</Text>
+          </Pressable>
+        </View>
+      </Card>
+
+      <Card style={styles.card}>
+        <Text style={styles.sectionTitle}>Current State</Text>
+        <Metric label="Speed" value={`${Math.round(data.speed)} ${data.speedUnit === 'MPH' ? 'mph' : 'km/h'}`} />
+        <Metric label="Last update" value={formatTime(data.lastUpdate)} />
+        <Metric label="Address" value={data.address ?? 'Unavailable'} />
+        <Metric label="Ignition" value={data.ignition == null ? 'Unavailable' : data.ignition ? 'On' : 'Off'} />
+        <Metric label="GPS" value={data.gpsValid ? 'Valid' : 'Invalid'} />
+      </Card>
+
+      <Card style={styles.card}>
+        <Text style={styles.sectionTitle}>Assignment</Text>
+        <Metric label="Driver" value={data.driverName ?? 'Unassigned'} />
+        <Metric label="Phone" value={data.driverPhone ?? 'Unavailable'} />
+        <Metric label="Project" value={data.projectId ? `#${data.projectId}` : 'Unassigned'} />
+        <Metric label="Group" value={data.groupId ? `#${data.groupId}` : 'Unassigned'} />
+        <Metric label="Expiry" value={data.expiryDate ?? 'Unavailable'} />
+      </Card>
+
+      <RowCard icon="sim-outline" title="SIM information" meta={`${data.simNumber ?? 'No SIM'} | ${data.simProvider ?? 'Provider unavailable'}`} />
+    </ScrollView>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text numberOfLines={2} style={styles.metricValue}>{value}</Text>
+    </View>
+  );
+}
+
+function formatTime(iso?: string | null) {
+  if (!iso) return 'No data';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? 'No data'
+    : date.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+const styles = StyleSheet.create({
+  content: { backgroundColor: palette.pageBackground, gap: spacing.md, padding: spacing.md },
+  header: {
+    alignItems: 'center',
+    backgroundColor: palette.textPrimary,
+    borderRadius: 10,
+    gap: spacing.sm,
+    minHeight: 210,
+    overflow: 'hidden',
+    padding: spacing.lg,
+  },
+  back: { alignItems: 'center', height: 42, justifyContent: 'center', left: spacing.sm, position: 'absolute', top: spacing.sm, width: 42 },
+  vehicleIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 999, height: 76, justifyContent: 'center', marginTop: spacing.lg, width: 76 },
+  name: { color: palette.white, fontSize: typography.h2, fontWeight: '900', marginTop: spacing.sm },
+  subtitle: { color: 'rgba(255,255,255,0.78)', fontSize: typography.caption },
+  actions: { gap: spacing.md },
+  actionRow: { flexDirection: 'row', gap: spacing.sm },
+  iconAction: {
+    alignItems: 'center',
+    backgroundColor: '#F7F7F7',
+    borderRadius: 8,
+    flex: 1,
+    gap: 4,
+    height: 64,
+    justifyContent: 'center',
+  },
+  iconActionText: { color: palette.textPrimary, fontSize: typography.caption, fontWeight: '800' },
+  card: { gap: spacing.sm },
+  sectionTitle: { color: palette.textPrimary, fontSize: typography.title, fontWeight: '900' },
+  metric: {
+    borderTopColor: palette.divider,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    paddingTop: spacing.sm,
+  },
+  metricLabel: { color: palette.textSecondary, fontSize: typography.caption, fontWeight: '700', width: 108 },
+  metricValue: { color: palette.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '700', textAlign: 'right' },
+});

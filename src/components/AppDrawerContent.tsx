@@ -19,14 +19,30 @@ import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens'
 type DrawerLink = {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  route: '/dashboard' | '/vehicles' | '/map';
+  route:
+    | '/dashboard'
+    | '/vehicles'
+    | '/map'
+    | '/events'
+    | '/geofences'
+    | '/reports'
+    | '/commands'
+    | '/management'
+    | '/settings';
   permission?: string;
+  module?: string;
 };
 
 const LINKS: DrawerLink[] = [
   { label: 'Home', icon: 'view-dashboard-outline', route: '/dashboard' },
   { label: 'All Vehicles', icon: 'car-multiple', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
   { label: 'All Vehicles Map', icon: 'map-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
+  { label: 'Events', icon: 'bell-alert-outline', route: '/events', permission: P.VIEW_LIVE_LOCATION },
+  { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
+  { label: 'All Vehicles Report', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
+  { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },
+  { label: 'Management', icon: 'shield-account-outline', route: '/management', permission: P.MANAGE_DEVICES },
+  { label: 'Settings', icon: 'cog-outline', route: '/settings' },
 ];
 
 export function AppDrawerContent(props: DrawerContentComponentProps) {
@@ -38,11 +54,22 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
 
   // Permission checks (hooks must be called unconditionally, so evaluate all).
   const canViewAll = useHasPermission(P.VIEW_ALL_VEHICLES);
+  const canLive = useHasPermission(P.VIEW_LIVE_LOCATION);
+  const canGeofence = useHasPermission(P.MANAGE_GEOFENCES);
+  const canReports = useHasPermission(P.VIEW_REPORTS);
+  const canCommands = useHasPermission(P.SEND_COMMANDS);
+  const canManageDevices = useHasPermission(P.MANAGE_DEVICES);
   const permissionMap: Record<string, boolean> = { [P.VIEW_ALL_VEHICLES]: canViewAll };
+  permissionMap[P.VIEW_LIVE_LOCATION] = canLive;
+  permissionMap[P.MANAGE_GEOFENCES] = canGeofence;
+  permissionMap[P.VIEW_REPORTS] = canReports;
+  permissionMap[P.SEND_COMMANDS] = canCommands;
+  permissionMap[P.MANAGE_DEVICES] = canManageDevices;
+  const enabledModules = new Set((tenant?.enabledModules ?? []).map((m) => m.toLowerCase()));
 
   const go = (route: DrawerLink['route']) => {
     props.navigation.closeDrawer();
-    router.push(route);
+    router.push(route as never);
   };
 
   const onLogout = () => {
@@ -91,7 +118,11 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
       </View>
 
       <DrawerContentScrollView {...props} contentContainerStyle={styles.items}>
-        {LINKS.filter((l) => !l.permission || permissionMap[l.permission]).map((link) => (
+        {LINKS.filter((l) => {
+          const allowed = !l.permission || permissionMap[l.permission];
+          const moduleEnabled = !l.module || enabledModules.size === 0 || enabledModules.has(l.module);
+          return allowed && moduleEnabled;
+        }).map((link) => (
           <DrawerRow key={link.route} icon={link.icon} label={link.label} onPress={() => go(link.route)} />
         ))}
         <View style={styles.divider} />

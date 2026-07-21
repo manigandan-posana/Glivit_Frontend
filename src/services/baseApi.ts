@@ -94,6 +94,20 @@ export const baseApi = createApi({
   reducerPath: 'api',
   // Demo mode serves canned data offline; otherwise talk to the real backend.
   baseQuery: env.demoMode ? demoBaseQuery : baseQueryWithReauth,
-  tagTypes: ['Dashboard', 'Device', 'Tenant'],
+  tagTypes: [
+    'Audit',
+    'Command',
+    'Dashboard',
+    'Device',
+    'Driver',
+    'Event',
+    'Geofence',
+    'Group',
+    'Project',
+    'Report',
+    'Settings',
+    'Tenant',
+    'User',
+  ],
   endpoints: () => ({}),
 });

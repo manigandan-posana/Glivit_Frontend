@@ -104,3 +104,150 @@ export type DeviceDetail = DeviceSummary & {
   distanceUnit?: string | null;
   speedUnit?: string | null;
 };
+
+export type ProjectDto = {
+  id: number;
+  name: string;
+  description?: string | null;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type DriverDto = {
+  id: number;
+  projectId?: number | null;
+  name: string;
+  identifier?: string | null;
+  phone?: string | null;
+  licenceNumber?: string | null;
+  licenceExpiry?: string | null;
+  emergencyContact?: string | null;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type GroupDto = {
+  id: number;
+  name: string;
+  parentId?: number | null;
+  managerId?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ManagedUserDto = {
+  id: number;
+  username: string;
+  name: string;
+  email?: string | null;
+  mobile?: string | null;
+  address?: string | null;
+  role: Role;
+  managerId?: number | null;
+  status: string;
+  accountExpiry?: string | null;
+  permissions: Record<string, boolean>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type EventDto = {
+  id: number;
+  deviceId: number;
+  vehicleId?: number | null;
+  eventType: string;
+  severity: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  speed?: number | null;
+  address?: string | null;
+  deviceTime?: string | null;
+  serverTime: string;
+  acknowledged: boolean;
+  acknowledgedAt?: string | null;
+  detail?: string | null;
+};
+
+export type GeofenceDto = {
+  id: number;
+  name: string;
+  description?: string | null;
+  color: string;
+  type: 'CIRCLE' | 'POLYGON' | 'POLYLINE' | string;
+  coordinates: number[][];
+  radiusMeters?: number | null;
+  corridorWidthMeters?: number | null;
+  assignedDeviceIds: number[];
+  assignedGroupIds: number[];
+  enterAlert: boolean;
+  exitAlert: boolean;
+  activeSchedule?: string | null;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CommandDto = {
+  id: number;
+  deviceId: number;
+  commandType: string;
+  payload?: string | null;
+  status: 'REQUESTED' | 'SENT' | 'DELIVERED' | 'ACKNOWLEDGED' | 'FAILED' | 'TIMED_OUT';
+  idempotencyKey: string;
+  responseMessage?: string | null;
+  requestedAt: string;
+  updatedAt: string;
+};
+
+export type ReportDto = {
+  id: number;
+  reportType: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  fromTime: string;
+  toTime: string;
+  outputFormat: string;
+  fileName?: string | null;
+  fileSize?: number | null;
+  downloadUrl?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+};
+
+export type ReportContent = {
+  fileName: string;
+  contentType: string;
+  content: string;
+};
+
+export type SettingsDto = {
+  distanceUnit: string;
+  speedUnit: string;
+  timeFormat: string;
+  mapStyle: string;
+  trafficEnabled: boolean;
+  routeColorMode: string;
+  notificationSound: boolean;
+  language: string;
+  dateFormat: string;
+  defaultHistoryRange: string;
+  autoFollowVehicle: boolean;
+  refreshFrequencySeconds: number;
+  privacyOptions?: string | null;
+  updatedAt?: string | null;
+};
+
+export type AuditDto = {
+  id: number;
+  userId?: number | null;
+  username?: string | null;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  outcome: string;
+  correlationId?: string | null;
+  detail?: string | null;
+  createdAt: string;
+};

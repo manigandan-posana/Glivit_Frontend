@@ -49,6 +49,7 @@ export default function RootLayout() {
               <Stack.Screen name="index" />
               <Stack.Screen name="company-code" />
               <Stack.Screen name="login" />
+              <Stack.Screen name="device-profile" />
               <Stack.Screen name="live-track" />
               <Stack.Screen name="(app)" />
             </Stack>

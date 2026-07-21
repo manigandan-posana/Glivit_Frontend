@@ -118,8 +118,8 @@ export default function VehiclesScreen() {
             device={item}
             onPress={() =>
               router.push({
-                pathname: '/live-track',
-                params: { name: item.name, subtitle: item.address ?? '' },
+                pathname: '/device-profile' as never,
+                params: { id: String(item.id) },
               })
             }
           />

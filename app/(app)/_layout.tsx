@@ -38,6 +38,12 @@ export default function AppLayout() {
       <Drawer.Screen name="dashboard" options={{ title: tenant?.appName ?? 'Home' }} />
       <Drawer.Screen name="vehicles" options={{ title: 'All Vehicles' }} />
       <Drawer.Screen name="map" options={{ headerShown: false }} />
+      <Drawer.Screen name="events" options={{ title: 'Events' }} />
+      <Drawer.Screen name="geofences" options={{ title: 'Geofences' }} />
+      <Drawer.Screen name="reports" options={{ title: 'Reports' }} />
+      <Drawer.Screen name="commands" options={{ title: 'Device Commands' }} />
+      <Drawer.Screen name="management" options={{ title: 'Management' }} />
+      <Drawer.Screen name="settings" options={{ title: 'Settings' }} />
     </Drawer>
   );
 }
