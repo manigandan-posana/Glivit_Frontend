@@ -171,15 +171,20 @@ export default function VehicleTrackerScreen() {
   // Real route playback for the selected device. Falls back to the demo route
   // only when no device is passed or the app is in offline demo mode.
   const deviceId = params.deviceId ? Number(params.deviceId) : undefined;
-  const { data: playback } = useGetDevicePlaybackQuery(
+  // A real, tenant-scoped device is selected (not the offline/demo screen).
+  const hasRealDevice = deviceId != null && !Number.isNaN(deviceId) && !env.demoMode;
+  const { data: playback, isLoading: playbackLoading } = useGetDevicePlaybackQuery(
     { deviceId: deviceId as number },
-    { skip: env.demoMode || deviceId == null || Number.isNaN(deviceId) }
+    { skip: !hasRealDevice }
   );
+  const realPointCount = playback?.points?.length ?? 0;
   const route = useMemo<Coordinate[]>(() => {
     const points = playback?.points;
     if (points && points.length > 1) {
       return points.map((p) => ({ latitude: p.lat, longitude: p.lng }));
     }
+    // Demo route is a dev/offline fallback only; never rendered for a real
+    // device (the empty-state gate below returns before the map in that case).
     return DEMO_ROUTE;
   }, [playback]);
   const totalDistanceKm = useMemo(
@@ -378,6 +383,7 @@ export default function VehicleTrackerScreen() {
     routeSnapshot.distanceKm,
     selectedOptionId,
     status,
+    totalDistanceKm,
     vehicleCoordinate,
     vehicleName,
     vehicleSubtitle,
@@ -577,6 +583,44 @@ export default function VehicleTrackerScreen() {
   }, [followVehicle, isFollowing, isMapReady, updateVehicleScreenPoint, vehicleCoordinate]);
 
   const isMapLoading = mapLoadState === 'loading' || !mapContainerReady;
+
+  // Real device with no usable history: show a loading state while the
+  // playback query resolves, then a proper empty state. Never fall back to the
+  // demo route for a real device (no fabricated GPS movement in production).
+  if (hasRealDevice && (playbackLoading || realPointCount <= 1)) {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.headerCard, { top: insets.top + 12 }]}>
+          <Pressable
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/map'))}
+            style={styles.headerIconButton}>
+            <MaterialCommunityIcons color={BRAND.green} name="arrow-left" size={30} />
+          </Pressable>
+          <View style={styles.headerTextBlock}>
+            <Text numberOfLines={1} style={styles.headerTitle}>{vehicleName}</Text>
+            <Text numberOfLines={1} style={styles.headerSubtitle}>{vehicleSubtitle}</Text>
+          </View>
+        </View>
+        <View style={styles.playbackStateBox}>
+          {playbackLoading ? (
+            <>
+              <ActivityIndicator color={BRAND.green} size="large" />
+              <Text style={styles.playbackStateText}>Loading route history…</Text>
+            </>
+          ) : (
+            <>
+              <MaterialCommunityIcons color={BRAND.muted} name="map-marker-off-outline" size={40} />
+              <Text style={styles.playbackStateText}>
+                No GPS history is available for the selected period.
+              </Text>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   if (!isMapAvailable || !MapLibre) {
     return (
@@ -1382,6 +1426,19 @@ const styles = StyleSheet.create({
   screen: {
     backgroundColor: BRAND.mapMint,
     flex: 1,
+  },
+  playbackStateBox: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  playbackStateText: {
+    color: BRAND.ink,
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   mapCanvas: {
     ...StyleSheet.absoluteFillObject,
