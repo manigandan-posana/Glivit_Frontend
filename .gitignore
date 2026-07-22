@@ -44,4 +44,6 @@ app-example
 # generated native folders
 /ios
 /android
+# Raw/oversized 3D source & runtime models — keep out of git (use LFS/external if needed)
 models/model.fbx
+models/model.glb

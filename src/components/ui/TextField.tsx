@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,7 +8,8 @@ import {
   View,
 } from 'react-native';
 
-import { defaultColors, layout, radius, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { layout, radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type TextFieldProps = TextInputProps & {
   label?: string;
@@ -17,23 +18,39 @@ type TextFieldProps = TextInputProps & {
 };
 
 /** Labelled input with a validation error slot and optional password toggle. */
-export function TextField({ label, error, secure = false, style, ...rest }: TextFieldProps) {
+export function TextField({ label, error, secure = false, style, onFocus, onBlur, ...rest }: TextFieldProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [hidden, setHidden] = useState(secure);
+  const [focused, setFocused] = useState(false);
 
   return (
     <View style={styles.wrapper}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <View style={[styles.inputRow, error ? styles.inputError : null]}>
+      <View
+        style={[
+          styles.inputRow,
+          focused ? styles.inputFocused : null,
+          error ? styles.inputError : null,
+        ]}>
         <TextInput
-          placeholderTextColor={defaultColors.textSecondary}
+          placeholderTextColor={colors.textMuted}
           secureTextEntry={hidden}
           style={[styles.input, style]}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
           {...rest}
         />
         {secure ? (
           <MaterialCommunityIcons
             accessibilityLabel={hidden ? 'Show password' : 'Hide password'}
-            color={defaultColors.textSecondary}
+            color={colors.textSecondary}
             name={hidden ? 'eye-off-outline' : 'eye-outline'}
             onPress={() => setHidden((v) => !v)}
             size={22}
@@ -46,41 +63,45 @@ export function TextField({ label, error, secure = false, style, ...rest }: Text
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    width: '100%',
-  },
-  label: {
-    color: defaultColors.textPrimary,
-    fontSize: typography.label,
-    fontWeight: '600',
-    marginBottom: spacing.xs,
-  },
-  inputRow: {
-    alignItems: 'center',
-    backgroundColor: defaultColors.cardBackground,
-    borderColor: defaultColors.divider,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    flexDirection: 'row',
-    height: layout.inputHeight,
-    paddingHorizontal: spacing.md,
-  },
-  inputError: {
-    borderColor: defaultColors.errorRed,
-  },
-  input: {
-    color: defaultColors.textPrimary,
-    flex: 1,
-    fontSize: typography.body,
-    height: '100%',
-  },
-  toggle: {
-    paddingLeft: spacing.sm,
-  },
-  errorText: {
-    color: defaultColors.errorRed,
-    fontSize: typography.caption,
-    marginTop: spacing.xs,
-  },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    wrapper: {
+      width: '100%',
+    },
+    label: {
+      color: c.textSecondary,
+      fontSize: typography.label,
+      fontWeight: '600',
+      marginBottom: spacing.xs,
+    },
+    inputRow: {
+      alignItems: 'center',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      height: layout.inputHeight,
+      paddingHorizontal: spacing.md,
+    },
+    inputFocused: {
+      borderColor: c.primary,
+    },
+    inputError: {
+      borderColor: c.danger,
+    },
+    input: {
+      color: c.textPrimary,
+      flex: 1,
+      fontSize: typography.body,
+      height: '100%',
+    },
+    toggle: {
+      paddingLeft: spacing.sm,
+    },
+    errorText: {
+      color: c.danger,
+      fontSize: typography.caption,
+      marginTop: spacing.xs,
+    },
+  });

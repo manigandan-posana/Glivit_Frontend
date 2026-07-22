@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/src/components/ui/Button';
@@ -8,9 +8,18 @@ import { ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useGetSettingsQuery, useUpdateSettingsMutation } from '@/src/services/operationsApi';
 import type { SettingsDto } from '@/src/types/api';
-import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme, type ThemeMode } from '@/src/theme/ThemeProvider';
+import { spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+
+const THEME_MODES: { value: ThemeMode; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
 
 export default function SettingsScreen() {
+  const { colors: c, mode, setMode } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { data, isLoading, isError, error, refetch } = useGetSettingsQuery();
   const [draft, setDraft] = React.useState<SettingsDto | null>(null);
   const [updateSettings, { isLoading: isSaving }] = useUpdateSettingsMutation();
@@ -34,6 +43,21 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
+      <Card style={styles.card}>
+        <Text style={styles.title}>Appearance</Text>
+        <View style={styles.segment}>
+          <Text style={styles.label}>Theme</Text>
+          <View style={styles.chips}>
+            {THEME_MODES.map((m) => (
+              <Chip key={m.value} active={m.value === mode} label={m.label} onPress={() => setMode(m.value)} />
+            ))}
+          </View>
+          <Text style={styles.hint}>
+            {mode === 'system' ? 'Following your device appearance.' : `Always ${mode}.`}
+          </Text>
+        </View>
+      </Card>
+
       <Card style={styles.card}>
         <Text style={styles.title}>Units</Text>
         <Segment
@@ -99,7 +123,7 @@ export default function SettingsScreen() {
         />
       </Card>
 
-      <Button label="Save settings" loading={isSaving} onPress={save} />
+      <Button label="Save settings" icon="content-save-outline" loading={isSaving} onPress={save} />
     </ScrollView>
   );
 }
@@ -115,6 +139,8 @@ function Segment({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <View style={styles.segment}>
       <Text style={styles.label}>{label}</Text>
@@ -136,33 +162,37 @@ function SwitchRow({
   value: boolean;
   onValueChange: (value: boolean) => void;
 }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <View style={styles.switchRow}>
       <Text style={styles.switchLabel}>{label}</Text>
       <Switch
         onValueChange={onValueChange}
-        thumbColor={value ? palette.white : palette.cardBackground}
-        trackColor={{ false: palette.divider, true: defaultColors.primary }}
+        thumbColor="#FFFFFF"
+        trackColor={{ false: c.borderStrong, true: c.primary }}
         value={value}
       />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  content: { backgroundColor: palette.pageBackground, gap: spacing.md, padding: spacing.md },
-  card: { gap: spacing.md },
-  title: { color: palette.textPrimary, fontSize: typography.title, fontWeight: '900' },
-  segment: { gap: spacing.sm },
-  label: { color: palette.textSecondary, fontSize: typography.caption, fontWeight: '800' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  switchRow: {
-    alignItems: 'center',
-    borderColor: palette.divider,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: spacing.md,
-  },
-  switchLabel: { color: palette.textPrimary, fontSize: typography.body, fontWeight: '700' },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
+    card: { gap: spacing.md },
+    title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
+    segment: { gap: spacing.sm },
+    label: { color: c.textSecondary, fontSize: typography.caption, fontWeight: '800', textTransform: 'uppercase' },
+    hint: { color: c.textMuted, fontSize: typography.caption },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    switchRow: {
+      alignItems: 'center',
+      borderColor: c.border,
+      borderTopWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingTop: spacing.md,
+    },
+    switchLabel: { color: c.textPrimary, fontSize: typography.body, fontWeight: '700' },
+  });

@@ -8,7 +8,8 @@ import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/Stat
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useGetDevicesQuery } from '@/src/services/devicesApi';
 import { useGetCommandsQuery, useSubmitCommandMutation } from '@/src/services/operationsApi';
-import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const COMMANDS = [
   { type: 'REQUEST_LOCATION', label: 'Locate', icon: 'crosshairs-gps', destructive: false },
@@ -19,6 +20,8 @@ const COMMANDS = [
 ] as const;
 
 export default function CommandsScreen() {
+  const { colors: c } = useTheme();
+  const styles = React.useMemo(() => makeStyles(c), [c]);
   const { data: devices, isLoading: loadingDevices } = useGetDevicesQuery({ page: 0, size: 50 });
   const { data, isLoading, isFetching, isError, error, refetch } = useGetCommandsQuery({ size: 50 });
   const [selectedDeviceId, setSelectedDeviceId] = React.useState<number | null>(null);
@@ -67,7 +70,7 @@ export default function CommandsScreen() {
         contentContainerStyle={styles.list}
         data={data.content}
         keyExtractor={(item) => String(item.id)}
-        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={defaultColors.primary} />}
+        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={c.primary} />}
         ListHeaderComponent={
           <Card style={styles.panel}>
             <Text style={styles.title}>Command Centre</Text>
@@ -93,7 +96,7 @@ export default function CommandsScreen() {
                     onPress={() => submit(command)}
                     style={[styles.commandButton, command.destructive ? styles.commandDestructive : null]}>
                     <MaterialCommunityIcons
-                      color={command.destructive ? palette.errorRed : defaultColors.primary}
+                      color={command.destructive ? c.danger : c.primary}
                       name={loading ? 'timer-sand' : command.icon}
                       size={22}
                     />
@@ -112,7 +115,7 @@ export default function CommandsScreen() {
         renderItem={({ item }) => (
           <View style={styles.historyCard}>
             <View style={styles.historyIcon}>
-              <MaterialCommunityIcons color={palette.blue} name="console" size={22} />
+              <MaterialCommunityIcons color={c.info} name="console" size={22} />
             </View>
             <View style={styles.historyBody}>
               <Text style={styles.historyTitle}>{item.commandType}</Text>
@@ -133,41 +136,42 @@ function formatTime(iso: string) {
     : date.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-const styles = StyleSheet.create({
-  screen: { backgroundColor: palette.pageBackground, flex: 1 },
-  list: { gap: spacing.sm, padding: spacing.md },
-  panel: { gap: spacing.md },
-  title: { color: palette.textPrimary, fontSize: typography.title, fontWeight: '900' },
-  subtitle: { color: palette.textSecondary, fontSize: typography.caption, lineHeight: 17 },
-  deviceChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  commands: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  commandButton: {
-    alignItems: 'center',
-    backgroundColor: '#F7FCF8',
-    borderColor: '#CFEFD6',
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 4,
-    height: 72,
-    justifyContent: 'center',
-    minWidth: '30%',
-    paddingHorizontal: spacing.sm,
-  },
-  commandDestructive: { backgroundColor: '#FFF7F6', borderColor: '#FFD4CE' },
-  commandLabel: { color: defaultColors.primary, fontSize: typography.caption, fontWeight: '800' },
-  commandLabelDanger: { color: palette.errorRed },
-  historyCard: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: 10,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  historyIcon: { alignItems: 'center', backgroundColor: '#E8F5FA', borderRadius: 8, height: 42, justifyContent: 'center', width: 42 },
-  historyBody: { flex: 1, minWidth: 0 },
-  historyTitle: { color: palette.textPrimary, fontSize: typography.body, fontWeight: '800' },
-  meta: { color: palette.textSecondary, fontSize: typography.caption, marginTop: 2 },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    list: { gap: spacing.sm, padding: spacing.md },
+    panel: { gap: spacing.md },
+    title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
+    subtitle: { color: c.textSecondary, fontSize: typography.caption, lineHeight: 17 },
+    deviceChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    commands: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    commandButton: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderColor: c.accent,
+      borderRadius: radius.sm,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      gap: 4,
+      height: 72,
+      justifyContent: 'center',
+      minWidth: '30%',
+      paddingHorizontal: spacing.sm,
+    },
+    commandDestructive: { backgroundColor: 'rgba(220,38,38,0.10)', borderColor: 'rgba(220,38,38,0.35)' },
+    commandLabel: { color: c.primary, fontSize: typography.caption, fontWeight: '800' },
+    commandLabelDanger: { color: c.danger },
+    historyCard: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.md,
+      padding: spacing.md,
+    },
+    historyIcon: { alignItems: 'center', backgroundColor: 'rgba(37,99,235,0.12)', borderRadius: radius.sm, height: 42, justifyContent: 'center', width: 42 },
+    historyBody: { flex: 1, minWidth: 0 },
+    historyTitle: { color: c.textPrimary, fontSize: typography.body, fontWeight: '800' },
+    meta: { color: c.textSecondary, fontSize: typography.caption, marginTop: 2 },
+  });

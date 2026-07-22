@@ -21,12 +21,15 @@ import {
   useGetUsersQuery,
 } from '@/src/services/operationsApi';
 import { useHasPermission } from '@/src/store/hooks';
-import { palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type Tab = 'devices' | 'users' | 'projects' | 'drivers' | 'groups' | 'audit';
 type NewUserDraft = { name: string; username: string; password: string; role: 'ADMIN' | 'DRIVER' };
 
 export default function ManagementScreen() {
+  const { colors: c } = useTheme();
+  const styles = React.useMemo(() => makeStyles(c), [c]);
   const canDevices = useHasPermission(P.CREATE_DEVICE);
   const canUsers = useHasPermission(P.MANAGE_USERS);
   const canProjects = useHasPermission(P.MANAGE_PROJECTS);
@@ -147,7 +150,7 @@ export default function ManagementScreen() {
               accessibilityRole="button"
               onPress={() => Alert.alert('Scan IMEI', 'QR/barcode scanner is enabled in native builds with camera permission.')}
               style={styles.scanButton}>
-              <MaterialCommunityIcons color={palette.primaryGreen} name="qrcode-scan" size={24} />
+              <MaterialCommunityIcons color={c.primary} name="qrcode-scan" size={24} />
             </Pressable>
           </View>
           <View style={styles.categoryRow}>
@@ -266,6 +269,8 @@ function Section({
   submitDisabled?: boolean;
   onSubmit: () => void;
 }) {
+  const { colors: c } = useTheme();
+  const styles = React.useMemo(() => makeStyles(c), [c]);
   return (
     <Card style={styles.form}>
       <Text style={styles.title}>{title}</Text>
@@ -285,22 +290,23 @@ function nextYear() {
   return d.toISOString().slice(0, 10);
 }
 
-const styles = StyleSheet.create({
-  content: { backgroundColor: palette.pageBackground, gap: spacing.md, padding: spacing.md },
-  tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  form: { gap: spacing.md },
-  title: { color: palette.textPrimary, fontSize: typography.title, fontWeight: '900' },
-  imeiRow: { alignItems: 'flex-end', flexDirection: 'row', gap: spacing.sm },
-  imeiInput: { flex: 1, minWidth: 0 },
-  scanButton: {
-    alignItems: 'center',
-    backgroundColor: '#EAF9EE',
-    borderColor: '#CFEFD6',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 50,
-    justifyContent: 'center',
-    width: 50,
-  },
-  categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
+    tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    form: { gap: spacing.md },
+    title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
+    imeiRow: { alignItems: 'flex-end', flexDirection: 'row', gap: spacing.sm },
+    imeiInput: { flex: 1, minWidth: 0 },
+    scanButton: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderColor: c.accent,
+      borderRadius: radius.sm,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      height: 52,
+      justifyContent: 'center',
+      width: 52,
+    },
+    categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  });

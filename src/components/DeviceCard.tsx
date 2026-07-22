@@ -1,10 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusPill } from '@/src/components/ui/StatusPill';
 import type { DeviceSummary } from '@/src/types/api';
-import { palette, radius, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const CATEGORY_ICON: Record<string, React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
   CAR: 'car',
@@ -18,16 +19,21 @@ const CATEGORY_ICON: Record<string, React.ComponentProps<typeof MaterialCommunit
 };
 
 export function DeviceCard({ device, onPress }: { device: DeviceSummary; onPress: () => void }) {
+  const { colors: c, elevation } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const online = device.gpsValid && device.state !== 'NO_DATA' && device.state !== 'INACTIVE';
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.card}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, elevation(1), pressed && { opacity: 0.9 }]}>
       <View style={styles.iconWrap}>
         <MaterialCommunityIcons
-          color={palette.primaryGreen}
+          color={c.primary}
           name={CATEGORY_ICON[device.category] ?? 'crosshairs-gps'}
           size={28}
         />
-        <View style={[styles.onlineDot, { backgroundColor: online ? palette.primaryGreen : palette.textSecondary }]} />
+        <View style={[styles.onlineDot, { backgroundColor: online ? c.primaryGreen : c.textMuted }]} />
       </View>
 
       <View style={styles.body}>
@@ -59,9 +65,11 @@ function Meta({
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   text: string;
 }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <View style={styles.meta}>
-      <MaterialCommunityIcons color={palette.textSecondary} name={icon} size={14} />
+      <MaterialCommunityIcons color={c.textSecondary} name={icon} size={14} />
       <Text style={styles.metaText}>{text}</Text>
     </View>
   );
@@ -74,40 +82,41 @@ function formatUpdate(iso?: string | null) {
   return d.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-const styles = StyleSheet.create({
-  card: {
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  iconWrap: {
-    alignItems: 'center',
-    backgroundColor: '#EAF9EE',
-    borderRadius: radius.md,
-    height: 52,
-    justifyContent: 'center',
-    width: 52,
-  },
-  onlineDot: {
-    borderColor: palette.white,
-    borderRadius: 6,
-    borderWidth: 2,
-    bottom: -2,
-    height: 12,
-    position: 'absolute',
-    right: -2,
-    width: 12,
-  },
-  body: { flex: 1, minWidth: 0 },
-  topRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
-  name: { color: palette.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '800' },
-  imei: { color: palette.textSecondary, fontSize: typography.caption, marginTop: 2 },
-  address: { color: palette.textSecondary, fontSize: typography.caption, marginTop: 2 },
-  metaRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm },
-  meta: { alignItems: 'center', flexDirection: 'row', gap: 4 },
-  metaText: { color: palette.textSecondary, fontSize: typography.caption },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    card: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.lg,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.md,
+      padding: spacing.md,
+    },
+    iconWrap: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.md,
+      height: 52,
+      justifyContent: 'center',
+      width: 52,
+    },
+    onlineDot: {
+      borderColor: c.surface,
+      borderRadius: 6,
+      borderWidth: 2,
+      bottom: -2,
+      height: 12,
+      position: 'absolute',
+      right: -2,
+      width: 12,
+    },
+    body: { flex: 1, minWidth: 0 },
+    topRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
+    name: { color: c.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '800' },
+    imei: { color: c.textSecondary, fontSize: typography.caption, marginTop: 2 },
+    address: { color: c.textSecondary, fontSize: typography.caption, marginTop: 2 },
+    metaRow: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm },
+    meta: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    metaText: { color: c.textSecondary, fontSize: typography.caption },
+  });

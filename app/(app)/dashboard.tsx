@@ -5,9 +5,11 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'r
 import { Card } from '@/src/components/ui/Card';
 import { Doughnut, type DoughnutSegment } from '@/src/components/ui/Doughnut';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
+import { AiCommandCenterCard } from '@/src/components/AiCommandCenterCard';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useGetDashboardSummaryQuery } from '@/src/services/dashboardApi';
-import { defaultColors, palette, spacing, stateColors, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const STATE_ORDER = ['RUNNING', 'STOPPED', 'IDLE', 'INACTIVE', 'NO_DATA', 'EXPIRED'] as const;
 
@@ -23,6 +25,8 @@ const STATE_LABELS: Record<string, string> = {
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { colors: c, stateColors } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { data, isLoading, isFetching, isError, error, refetch } = useGetDashboardSummaryQuery();
 
   const segments = useMemo<DoughnutSegment[]>(() => {
@@ -32,7 +36,7 @@ export default function DashboardScreen() {
       value: data.counts[state] ?? 0,
       color: stateColors[state],
     }));
-  }, [data]);
+  }, [data, stateColors]);
 
   if (isLoading) {
     return <LoadingView label="Loading fleet summary…" />;
@@ -47,7 +51,10 @@ export default function DashboardScreen() {
   return (
     <ScrollView
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={defaultColors.primary} />}>
+      refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={c.primary} />}>
+      
+      <AiCommandCenterCard />
+
       <Card style={styles.chartCard}>
         <Text style={styles.sectionTitle}>Fleet Status</Text>
         {isEmptyFleet ? (
@@ -72,9 +79,13 @@ export default function DashboardScreen() {
                   : { pathname: '/vehicles', params: { state: card.key } }
               )
             }
-            style={styles.statusCard}>
+            style={({ pressed }) => [
+              styles.statusCard,
+              { borderColor: `${stateColors[card.key]}55` },
+              pressed && { opacity: 0.85 },
+            ]}>
             <View style={[styles.dot, { backgroundColor: stateColors[card.key] }]} />
-            <Text style={styles.statusCount}>{card.count}</Text>
+            <Text style={[styles.statusCount, { color: stateColors[card.key] }]}>{card.count}</Text>
             <Text style={styles.statusLabel}>{STATE_LABELS[card.key]}</Text>
           </Pressable>
         ))}
@@ -89,29 +100,35 @@ function formatTime(iso: string) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const styles = StyleSheet.create({
-  content: { backgroundColor: palette.pageBackground, gap: spacing.md, padding: spacing.md },
-  chartCard: { alignItems: 'center' },
-  sectionTitle: {
-    alignSelf: 'flex-start',
-    color: palette.textPrimary,
-    fontSize: typography.title,
-    fontWeight: '800',
-    marginBottom: spacing.md,
-  },
-  chartRow: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm },
-  updated: { color: palette.textSecondary, fontSize: typography.caption, marginTop: spacing.md },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  statusCard: {
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: 10,
-    borderWidth: 1,
-    flexBasis: '31.5%',
-    flexGrow: 1,
-    padding: spacing.md,
-  },
-  dot: { borderRadius: 6, height: 12, marginBottom: spacing.sm, width: 12 },
-  statusCount: { color: palette.textPrimary, fontSize: typography.h2, fontWeight: '800' },
-  statusLabel: { color: palette.textSecondary, fontSize: typography.caption, marginTop: 2 },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
+    chartCard: { alignItems: 'center' },
+    sectionTitle: {
+      alignSelf: 'flex-start',
+      color: c.textPrimary,
+      fontSize: typography.title,
+      fontWeight: '800',
+      marginBottom: spacing.md,
+    },
+    chartRow: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm },
+    updated: { color: c.textMuted, fontSize: typography.caption, marginTop: spacing.md },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    statusCard: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexBasis: '31.5%',
+      flexGrow: 1,
+      padding: spacing.md,
+    },
+    dot: { borderRadius: 6, height: 12, marginBottom: spacing.sm, width: 12 },
+    statusCount: {
+      color: c.textPrimary,
+      fontSize: typography.h2,
+      fontWeight: '800',
+      fontVariant: ['tabular-nums'],
+    },
+    statusLabel: { color: c.textSecondary, fontSize: typography.caption, marginTop: 2 },
+  });

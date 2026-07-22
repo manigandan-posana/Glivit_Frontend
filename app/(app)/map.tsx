@@ -20,12 +20,15 @@ import { isMapAvailable, MapLibre } from '@/src/services/maplibre';
 import { getMapStyle, toNativeStyle } from '@/src/services/mapStyle';
 import { useGetDevicesQuery } from '@/src/services/devicesApi';
 import type { DeviceSummary } from '@/src/types/api';
-import { palette, radius, spacing, stateColors, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 export default function AllVehiclesMapScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { colors: c, stateColors } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { width } = useWindowDimensions();
   const cameraRef = useRef<CameraRef>(null);
   const webMapRef = useRef<FleetWebMapHandle>(null);
@@ -49,7 +52,7 @@ export default function AllVehiclesMapScreen() {
         color: stateColors[d.state] ?? stateColors.NO_DATA,
         heading: d.course,
       })),
-    [located]
+    [located, stateColors]
   );
 
   const cardWidth = width - spacing.md * 2;
@@ -107,6 +110,9 @@ export default function AllVehiclesMapScreen() {
 
   const openLiveTrack = (item: DeviceSummary) =>
     router.push({ pathname: '/live-track', params: { deviceId: String(item.id), name: item.name, subtitle: item.address ?? '' } });
+
+  const openPlayback = (item: DeviceSummary) =>
+    router.push({ pathname: '/trip-playback' as never, params: { deviceId: String(item.id), name: item.name } });
 
   return (
     <View style={styles.screen}>
@@ -172,7 +178,18 @@ export default function AllVehiclesMapScreen() {
               </Text>
               <View style={styles.cardMetaRow}>
                 <Text style={styles.cardMeta}>{Math.round(item.speed)} km/h</Text>
-                <Text style={styles.cardTrack}>Tap to track ›</Text>
+                <View style={styles.cardActions}>
+                  <Pressable
+                    accessibilityLabel="Cinematic 3D playback"
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => openPlayback(item)}
+                    style={styles.cardPlay}>
+                    <MaterialCommunityIcons color={c.primary} name="movie-open" size={15} />
+                    <Text style={styles.cardPlayText}>Playback</Text>
+                  </Pressable>
+                  <Text style={styles.cardTrack}>Track ›</Text>
+                </View>
               </View>
             </Pressable>
           )}
@@ -198,6 +215,8 @@ function NativeFleetMap({
   onSelectIndex: (index: number) => void;
   selectedIndex: number;
 }) {
+  const { colors: c, stateColors } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { Map, Camera, Marker } = MapLibre!;
   return (
     <Map
@@ -241,54 +260,70 @@ function FloatingButton({
   onPress: () => void;
   loading?: boolean;
 }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <Pressable accessibilityRole="button" disabled={loading} onPress={onPress} style={styles.fab}>
-      <MaterialCommunityIcons color={palette.textPrimary} name={loading ? 'timer-sand' : icon} size={22} />
+      <MaterialCommunityIcons color={c.textPrimary} name={loading ? 'timer-sand' : icon} size={22} />
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { backgroundColor: palette.pageBackground, flex: 1 },
-  marker: {
-    alignItems: 'center',
-    borderColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 2,
-    height: 32,
-    justifyContent: 'center',
-    width: 32,
-  },
-  markerSelected: { borderColor: palette.blue, height: 40, width: 40 },
-  railLeft: { left: spacing.md, position: 'absolute' },
-  railRight: { gap: spacing.sm, position: 'absolute', right: spacing.md },
-  fab: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderRadius: radius.md,
-    elevation: 3,
-    height: 44,
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    width: 44,
-  },
-  emptyOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  cardList: { bottom: 0, left: 0, position: 'absolute', right: 0 },
-  cards: { gap: spacing.sm, paddingHorizontal: spacing.md },
-  card: {
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: spacing.md,
-  },
-  cardTop: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
-  cardName: { color: palette.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '800' },
-  cardAddress: { color: palette.textSecondary, fontSize: typography.caption, marginTop: 4 },
-  cardMetaRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
-  cardMeta: { color: palette.textPrimary, fontSize: typography.label, fontWeight: '700' },
-  cardTrack: { color: palette.blue, fontSize: typography.caption, fontWeight: '700' },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    marker: {
+      alignItems: 'center',
+      borderColor: '#FFFFFF',
+      borderRadius: 16,
+      borderWidth: 2,
+      height: 32,
+      justifyContent: 'center',
+      width: 32,
+    },
+    markerSelected: { borderColor: c.info, height: 40, width: 40 },
+    railLeft: { left: spacing.md, position: 'absolute' },
+    railRight: { gap: spacing.sm, position: 'absolute', right: spacing.md },
+    fab: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      borderRadius: radius.md,
+      elevation: 3,
+      height: 44,
+      justifyContent: 'center',
+      shadowColor: c.shadowColor,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      width: 44,
+    },
+    emptyOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+    cardList: { bottom: 0, left: 0, position: 'absolute', right: 0 },
+    cards: { gap: spacing.sm, paddingHorizontal: spacing.md },
+    card: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.lg,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      padding: spacing.md,
+    },
+    cardTop: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
+    cardName: { color: c.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '800' },
+    cardAddress: { color: c.textSecondary, fontSize: typography.caption, marginTop: 4 },
+    cardMetaRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
+    cardMeta: { color: c.textPrimary, fontSize: typography.label, fontWeight: '700' },
+    cardActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.md },
+    cardPlay: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: 4,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 4,
+    },
+    cardPlayText: { color: c.primary, fontSize: typography.caption, fontWeight: '800' },
+    cardTrack: { color: c.info, fontSize: typography.caption, fontWeight: '700' },
+  });

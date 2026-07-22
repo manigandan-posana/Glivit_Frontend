@@ -1,18 +1,21 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/src/components/ui/Button';
-import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 /**
  * Shown when the MapLibre native module is not present in the running binary
  * (e.g. Expo Go). Full maps require a development build.
  */
 export function MapUnavailable({ onAction, actionLabel }: { onAction?: () => void; actionLabel?: string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.container}>
-      <MaterialCommunityIcons color={defaultColors.primary} name="map-marker-radius-outline" size={64} />
+      <MaterialCommunityIcons color={colors.primary} name="map-marker-radius-outline" size={64} />
       <Text style={styles.title}>Map needs a development build</Text>
       <Text style={styles.message}>
         Maps use native MapLibre code that is not available in Expo Go. Run a development build to view
@@ -28,28 +31,29 @@ export function MapUnavailable({ onAction, actionLabel }: { onAction?: () => voi
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    backgroundColor: palette.pageBackground,
-    flex: 1,
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  title: {
-    color: palette.textPrimary,
-    fontSize: typography.title,
-    fontWeight: '800',
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  message: {
-    color: palette.textSecondary,
-    fontSize: typography.body,
-    lineHeight: 22,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
-  code: { color: palette.textPrimary, fontWeight: '700' },
-  action: { marginTop: spacing.lg, width: 200 },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      alignItems: 'center',
+      backgroundColor: c.pageBackground,
+      flex: 1,
+      justifyContent: 'center',
+      padding: spacing.xl,
+    },
+    title: {
+      color: c.textPrimary,
+      fontSize: typography.title,
+      fontWeight: '800',
+      marginTop: spacing.md,
+      textAlign: 'center',
+    },
+    message: {
+      color: c.textSecondary,
+      fontSize: typography.body,
+      lineHeight: 22,
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    code: { color: c.textPrimary, fontWeight: '700' },
+    action: { marginTop: spacing.lg, width: 200 },
+  });

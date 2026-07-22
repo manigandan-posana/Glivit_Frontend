@@ -5,7 +5,7 @@ import {
 } from '@react-navigation/drawer';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { P } from '@/src/constants/permissions';
@@ -14,16 +14,20 @@ import { authStorage } from '@/src/services/authStorage';
 import { useLogoutMutation } from '@/src/services/authApi';
 import { clearSession } from '@/src/store/authSlice';
 import { useAppDispatch, useAppSelector, useHasPermission } from '@/src/store/hooks';
-import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type DrawerLink = {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   route:
     | '/dashboard'
+    | '/ai-center'
     | '/vehicles'
     | '/map'
     | '/events'
+    | '/drivers'
+    | '/maintenance'
     | '/geofences'
     | '/reports'
     | '/commands'
@@ -35,9 +39,12 @@ type DrawerLink = {
 
 const LINKS: DrawerLink[] = [
   { label: 'Home', icon: 'view-dashboard-outline', route: '/dashboard' },
+  { label: 'AI Command Centre', icon: 'brain', route: '/ai-center', permission: P.VIEW_LIVE_LOCATION },
   { label: 'All Vehicles', icon: 'car-multiple', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
   { label: 'All Vehicles Map', icon: 'map-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
   { label: 'Events', icon: 'bell-alert-outline', route: '/events', permission: P.VIEW_LIVE_LOCATION },
+  { label: 'Drivers', icon: 'card-account-details-outline', route: '/drivers', permission: P.VIEW_LIVE_LOCATION },
+  { label: 'Maintenance', icon: 'wrench-outline', route: '/maintenance', permission: P.VIEW_LIVE_LOCATION },
   { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
   { label: 'All Vehicles Report', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
   { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },
@@ -48,6 +55,8 @@ const LINKS: DrawerLink[] = [
 export function AppDrawerContent(props: DrawerContentComponentProps) {
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const tenant = useAppSelector((s) => s.auth.tenantConfig);
   const user = useAppSelector((s) => s.auth.user);
   const [logout] = useLogoutMutation();
@@ -106,7 +115,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
           {tenant?.logoUrl ? (
             <Image contentFit="contain" source={{ uri: tenant.logoUrl }} style={styles.logoImage} />
           ) : (
-            <MaterialCommunityIcons color={palette.white} name="crosshairs-gps" size={30} />
+            <MaterialCommunityIcons color="#FFFFFF" name="crosshairs-gps" size={30} />
           )}
         </View>
         <Text numberOfLines={1} style={styles.tenantName}>
@@ -130,7 +139,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
       </DrawerContentScrollView>
 
       <Pressable accessibilityRole="button" onPress={onLogout} style={styles.logout}>
-        <MaterialCommunityIcons color={palette.errorRed} name="logout" size={22} />
+        <MaterialCommunityIcons color={c.danger} name="logout" size={22} />
         <Text style={styles.logoutText}>Logout</Text>
       </Pressable>
     </View>
@@ -146,9 +155,14 @@ function DrawerRow({
   label: string;
   onPress: () => void;
 }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.row}>
-      <MaterialCommunityIcons color={defaultColors.primary} name={icon} size={22} />
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: c.surfaceAlt }]}>
+      <MaterialCommunityIcons color={c.primary} name={icon} size={22} />
       <Text style={styles.rowLabel}>{label}</Text>
     </Pressable>
   );
@@ -159,49 +173,54 @@ function formatRole(role?: string) {
   return role.charAt(0) + role.slice(1).toLowerCase().replace('_', ' ');
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: palette.cardBackground },
-  header: {
-    backgroundColor: defaultColors.primary,
-    paddingBottom: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xxl + spacing.md,
-  },
-  logo: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 999,
-    height: 56,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: 56,
-  },
-  logoImage: { height: 56, width: 56 },
-  tenantName: { color: palette.white, fontSize: typography.title, fontWeight: '800', marginTop: spacing.sm },
-  userName: { color: 'rgba(255,255,255,0.9)', fontSize: typography.caption, marginTop: 2 },
-  items: { paddingTop: spacing.sm },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  rowLabel: { color: palette.textPrimary, fontSize: typography.body, fontWeight: '600' },
-  divider: {
-    backgroundColor: palette.divider,
-    height: 1,
-    marginHorizontal: spacing.lg,
-    marginVertical: spacing.sm,
-  },
-  logout: {
-    alignItems: 'center',
-    borderTopColor: palette.divider,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  logoutText: { color: palette.errorRed, fontSize: typography.body, fontWeight: '700' },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    flex: { flex: 1, backgroundColor: c.surface },
+    header: {
+      backgroundColor: c.primary,
+      borderBottomLeftRadius: radius.xl,
+      borderBottomRightRadius: radius.xl,
+      paddingBottom: spacing.lg,
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.xxl + spacing.md,
+    },
+    logo: {
+      alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      borderRadius: 999,
+      height: 56,
+      justifyContent: 'center',
+      overflow: 'hidden',
+      width: 56,
+    },
+    logoImage: { height: 56, width: 56 },
+    tenantName: { color: '#FFFFFF', fontSize: typography.title, fontWeight: '800', marginTop: spacing.sm },
+    userName: { color: 'rgba(255,255,255,0.9)', fontSize: typography.caption, marginTop: 2 },
+    items: { paddingTop: spacing.sm },
+    row: {
+      alignItems: 'center',
+      borderRadius: radius.sm,
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginHorizontal: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    rowLabel: { color: c.textPrimary, fontSize: typography.body, fontWeight: '600' },
+    divider: {
+      backgroundColor: c.border,
+      height: StyleSheet.hairlineWidth * 2,
+      marginHorizontal: spacing.lg,
+      marginVertical: spacing.sm,
+    },
+    logout: {
+      alignItems: 'center',
+      borderTopColor: c.border,
+      borderTopWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.md,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+    },
+    logoutText: { color: c.danger, fontSize: typography.body, fontWeight: '700' },
+  });

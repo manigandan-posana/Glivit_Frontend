@@ -10,13 +10,16 @@ import { StatusPill } from '@/src/components/ui/StatusPill';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useGetDevicesQuery } from '@/src/services/devicesApi';
 import type { DeviceSummary } from '@/src/types/api';
-import { defaultColors, palette, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const PAGE_SIZE = 20;
 
 export default function VehiclesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { state: stateFilter } = useLocalSearchParams<{ state?: string }>();
 
   const [rawSearch, setRawSearch] = useState('');
@@ -75,19 +78,19 @@ export default function VehiclesScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.searchBar}>
-        <MaterialCommunityIcons color={palette.textSecondary} name="magnify" size={20} />
+        <MaterialCommunityIcons color={c.textSecondary} name="magnify" size={20} />
         <TextInput
           autoCapitalize="none"
           autoCorrect={false}
           onChangeText={setRawSearch}
           placeholder="Search name or IMEI"
-          placeholderTextColor={palette.textSecondary}
+          placeholderTextColor={c.textMuted}
           style={styles.searchInput}
           value={rawSearch}
         />
         {rawSearch ? (
           <MaterialCommunityIcons
-            color={palette.textSecondary}
+            color={c.textSecondary}
             name="close-circle"
             onPress={() => setRawSearch('')}
             size={18}
@@ -132,27 +135,28 @@ export default function VehiclesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { backgroundColor: palette.pageBackground, flex: 1 },
-  searchBar: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  searchInput: { color: palette.textPrimary, flex: 1, fontSize: typography.body, paddingVertical: spacing.sm },
-  filterRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-  },
-  filterLabel: { color: palette.textSecondary, fontSize: typography.caption },
-  clearFilter: { color: defaultColors.secondary, fontSize: typography.caption, fontWeight: '700' },
-  list: { gap: spacing.sm, padding: spacing.md },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    searchBar: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderBottomWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    searchInput: { color: c.textPrimary, flex: 1, fontSize: typography.body, paddingVertical: spacing.sm },
+    filterRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+    },
+    filterLabel: { color: c.textSecondary, fontSize: typography.caption },
+    clearFilter: { color: c.secondary, fontSize: typography.caption, fontWeight: '700' },
+    list: { gap: spacing.sm, padding: spacing.md },
+  });

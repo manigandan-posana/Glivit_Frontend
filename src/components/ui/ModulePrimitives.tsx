@@ -1,14 +1,22 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { defaultColors, palette, radius, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+
+function useStyles() {
+  const { colors } = useTheme();
+  return { c: colors, styles: useMemo(() => makeStyles(colors), [colors]) };
+}
 
 export function Screen({ children }: { children: React.ReactNode }) {
+  const { styles } = useStyles();
   return <View style={styles.screen}>{children}</View>;
 }
 
 export function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  const { styles } = useStyles();
   return (
     <View style={styles.sectionTitle}>
       <Text style={styles.title}>{title}</Text>
@@ -28,11 +36,18 @@ export function Chip({
   onPress?: () => void;
   style?: ViewStyle;
 }) {
+  const { styles } = useStyles();
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected: !!active }}
       onPress={onPress}
-      style={[styles.chip, active ? styles.chipActive : null, style]}>
+      style={({ pressed }) => [
+        styles.chip,
+        active ? styles.chipActive : null,
+        pressed && { opacity: 0.85 },
+        style,
+      ]}>
       <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>{label}</Text>
     </Pressable>
   );
@@ -51,11 +66,12 @@ export function RowCard({
   right?: React.ReactNode;
   onPress?: () => void;
 }) {
+  const { c, styles } = useStyles();
   const Wrapper = onPress ? Pressable : View;
   return (
     <Wrapper accessibilityRole={onPress ? 'button' : undefined} onPress={onPress} style={styles.rowCard}>
       <View style={styles.rowIcon}>
-        <MaterialCommunityIcons color={defaultColors.primary} name={icon} size={22} />
+        <MaterialCommunityIcons color={c.primary} name={icon} size={22} />
       </View>
       <View style={styles.rowText}>
         <Text numberOfLines={1} style={styles.rowTitle}>
@@ -73,53 +89,56 @@ export function RowCard({
 }
 
 export function FieldLabel({ children }: { children: React.ReactNode }) {
+  const { styles } = useStyles();
   return <Text style={styles.fieldLabel}>{children}</Text>;
 }
 
 export function EmptyLine({ text }: { text: string }) {
+  const { styles } = useStyles();
   return <Text style={styles.empty}>{text}</Text>;
 }
 
-const styles = StyleSheet.create({
-  screen: { backgroundColor: palette.pageBackground, flex: 1 },
-  sectionTitle: { gap: 2, paddingBottom: spacing.sm },
-  title: { color: palette.textPrimary, fontSize: typography.title, fontWeight: '800' },
-  subtitle: { color: palette.textSecondary, fontSize: typography.caption, lineHeight: 17 },
-  chip: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    height: 36,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  chipActive: { backgroundColor: defaultColors.primary, borderColor: defaultColors.primary },
-  chipText: { color: palette.textPrimary, fontSize: typography.caption, fontWeight: '700' },
-  chipTextActive: { color: palette.white },
-  rowCard: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderColor: palette.divider,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 70,
-    padding: spacing.md,
-  },
-  rowIcon: {
-    alignItems: 'center',
-    backgroundColor: '#EAF9EE',
-    borderRadius: radius.sm,
-    height: 42,
-    justifyContent: 'center',
-    width: 42,
-  },
-  rowText: { flex: 1, minWidth: 0 },
-  rowTitle: { color: palette.textPrimary, fontSize: typography.body, fontWeight: '800' },
-  rowMeta: { color: palette.textSecondary, fontSize: typography.caption, lineHeight: 17, marginTop: 2 },
-  fieldLabel: { color: palette.textSecondary, fontSize: typography.caption, fontWeight: '700' },
-  empty: { color: palette.textSecondary, fontSize: typography.body, padding: spacing.md, textAlign: 'center' },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    sectionTitle: { gap: 2, paddingBottom: spacing.sm },
+    title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '800' },
+    subtitle: { color: c.textSecondary, fontSize: typography.caption, lineHeight: 17 },
+    chip: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      height: 36,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+    },
+    chipActive: { backgroundColor: c.primary, borderColor: c.primary },
+    chipText: { color: c.textSecondary, fontSize: typography.caption, fontWeight: '700' },
+    chipTextActive: { color: c.onPrimary },
+    rowCard: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.md,
+      minHeight: 70,
+      padding: spacing.md,
+    },
+    rowIcon: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.sm,
+      height: 42,
+      justifyContent: 'center',
+      width: 42,
+    },
+    rowText: { flex: 1, minWidth: 0 },
+    rowTitle: { color: c.textPrimary, fontSize: typography.body, fontWeight: '800' },
+    rowMeta: { color: c.textSecondary, fontSize: typography.caption, lineHeight: 17, marginTop: 2 },
+    fieldLabel: { color: c.textSecondary, fontSize: typography.caption, fontWeight: '700' },
+    empty: { color: c.textSecondary, fontSize: typography.body, padding: spacing.md, textAlign: 'center' },
+  });

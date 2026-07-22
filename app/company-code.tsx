@@ -21,7 +21,8 @@ import { authStorage } from '@/src/services/authStorage';
 import { useResolveTenantMutation } from '@/src/services/tenantApi';
 import { setTenant } from '@/src/store/authSlice';
 import { useAppDispatch } from '@/src/store/hooks';
-import { palette, radius, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const schema = z.object({
   companyCode: z.string().trim().min(2, 'Enter your company code'),
@@ -32,6 +33,8 @@ export default function CompanyCodeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const { colors: c } = useTheme();
+  const styles = React.useMemo(() => makeStyles(c), [c]);
   const [resolveTenant, { isLoading }] = useResolveTenantMutation();
 
   const {
@@ -66,7 +69,7 @@ export default function CompanyCodeScreen() {
         ]}
         keyboardShouldPersistTaps="handled">
         <View style={styles.logoCircle}>
-          <MaterialCommunityIcons color={palette.white} name="crosshairs-gps" size={48} />
+          <MaterialCommunityIcons color="#FFFFFF" name="crosshairs-gps" size={48} />
         </View>
         <Text style={styles.title}>Enter Company Code</Text>
         <Text style={styles.subtitle}>
@@ -100,42 +103,48 @@ export default function CompanyCodeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: palette.loginBackground },
-  content: {
-    alignItems: 'center',
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xxl,
-  },
-  logoCircle: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderRadius: 999,
-    height: 100,
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-    width: 100,
-  },
-  title: {
-    color: '#FDFDFD',
-    fontSize: typography.h1,
-    fontWeight: '800',
-  },
-  subtitle: {
-    color: 'rgba(255,255,255,0.82)',
-    fontSize: typography.body,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
-  form: {
-    backgroundColor: palette.cardBackground,
-    borderRadius: radius.lg,
-    marginTop: spacing.xl,
-    padding: spacing.lg,
-    width: '100%',
-  },
-  submit: {
-    marginTop: spacing.md,
-  },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    flex: { flex: 1, backgroundColor: c.loginBackground },
+    content: {
+      alignItems: 'center',
+      flexGrow: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xxl,
+    },
+    logoCircle: {
+      alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      borderColor: 'rgba(255,255,255,0.22)',
+      borderRadius: 999,
+      borderWidth: 1,
+      height: 100,
+      justifyContent: 'center',
+      marginBottom: spacing.lg,
+      width: 100,
+    },
+    title: {
+      color: '#FFFFFF',
+      fontSize: typography.h1,
+      fontWeight: '800',
+      letterSpacing: 0.3,
+    },
+    subtitle: {
+      color: 'rgba(255,255,255,0.82)',
+      fontSize: typography.body,
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    form: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.xl,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      marginTop: spacing.xl,
+      padding: spacing.lg,
+      width: '100%',
+    },
+    submit: {
+      marginTop: spacing.md,
+    },
+  });

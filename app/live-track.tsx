@@ -1,7 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
-import Renderer from 'expo-three/build/Renderer';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,7 +21,7 @@ import { env } from '@/src/config/env';
 import { useGetDevicePlaybackQuery } from '@/src/services/devicesApi';
 import { getMapStyle, getMapStyleInfo, toNativeStyle } from '@/src/services/mapStyle';
 import { isMapAvailable, MapLibre } from '@/src/services/maplibre';
-import vehiclePreview from '@/models/model.preview.json';
+import { Vehicle3DMarker } from '@/src/components/Vehicle3DMarker';
 
 const VEHICLE_VIEW_SIZE = 164;
 const ROUTE_TICK_MS = 80;
@@ -52,12 +51,7 @@ type RouteOptionData = {
   metrics: { label: string; value: string }[];
 };
 
-type VehiclePreviewMesh = {
-  positions: number[];
-  normals: number[];
-  source: string;
-  vertexCount: number;
-};
+
 
 type Coordinate = {
   latitude: number;
@@ -69,7 +63,7 @@ type ScreenPoint = {
   y: number;
 };
 
-const VEHICLE_PREVIEW = vehiclePreview as VehiclePreviewMesh;
+
 
 const BRAND = {
   green: '#118a36',
@@ -757,7 +751,7 @@ export default function VehicleTrackerScreen() {
           <View style={styles.lockBeam} />
           <View style={styles.lockHaloOuter} />
           <View style={styles.lockHaloInner} />
-          <VehicleModelView heading={heading} />
+          <Vehicle3DMarker heading={heading} speed={currentSpeed} isActive={isTracking} color={BRAND.red} />
         </View>
       ) : null}
 
@@ -777,6 +771,20 @@ export default function VehicleTrackerScreen() {
             {vehicleSubtitle}
           </Text>
         </View>
+        {deviceId != null ? (
+          <Pressable
+            accessibilityLabel="Cinematic 3D playback"
+            accessibilityRole="button"
+            onPress={() =>
+              router.push({
+                pathname: '/trip-playback' as never,
+                params: { deviceId: String(deviceId), name: vehicleName },
+              })
+            }
+            style={styles.headerIconButton}>
+            <MaterialCommunityIcons color={BRAND.green} name="movie-open" size={26} />
+          </Pressable>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           onPress={() => {
@@ -1164,135 +1172,7 @@ function Metric({
   );
 }
 
-function VehicleModelView({ heading }: { heading: number }) {
-  const frameRef = useRef<number | null>(null);
-  const mountedRef = useRef(true);
-  const headingRef = useRef(heading);
 
-  useEffect(() => {
-    headingRef.current = heading;
-  }, [heading]);
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-      }
-    };
-  }, []);
-
-  const onContextCreate = useCallback(async (gl: ExpoWebGLRenderingContext) => {
-    const renderer = new Renderer({
-      alpha: true,
-      antialias: true,
-      gl: gl as unknown as WebGLRenderingContext,
-    });
-
-    renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
-    renderer.setClearColor(0x000000, 0);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(
-      34,
-      gl.drawingBufferWidth / gl.drawingBufferHeight,
-      0.1,
-      100
-    );
-
-    camera.position.set(0, 4.8, 6.2);
-    camera.lookAt(0, 0, 0);
-
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.9);
-    keyLight.position.set(4, 8, 6);
-    scene.add(keyLight);
-
-    const warmLight = new THREE.DirectionalLight(0xfff1d8, 1.4);
-    warmLight.position.set(-3, 3.5, 4);
-    scene.add(warmLight);
-
-    const rimLight = new THREE.DirectionalLight(0x45ffc2, 1.8);
-    rimLight.position.set(-4, 4, -4);
-    scene.add(rimLight);
-    scene.add(new THREE.AmbientLight(0xffffff, 1.7));
-
-    const vehicleRoot = new THREE.Group();
-    const model = createVehicleModelFromPreview();
-    prepareModel(model);
-    vehicleRoot.add(model);
-    scene.add(vehicleRoot);
-
-    const clock = new THREE.Clock();
-
-    const render = () => {
-      if (!mountedRef.current) {
-        renderer.dispose();
-        return;
-      }
-
-      const elapsed = clock.getElapsedTime();
-      const targetRotation = THREE.MathUtils.degToRad(-headingRef.current);
-      const rotationDelta = Math.atan2(
-        Math.sin(targetRotation - vehicleRoot.rotation.y),
-        Math.cos(targetRotation - vehicleRoot.rotation.y)
-      );
-
-      vehicleRoot.rotation.y += rotationDelta * 0.16;
-      vehicleRoot.position.y = Math.sin(elapsed * 3.2) * 0.025;
-
-      renderer.render(scene, camera);
-      gl.endFrameEXP();
-      frameRef.current = requestAnimationFrame(render);
-    };
-
-    render();
-  }, []);
-
-  return <GLView msaaSamples={4} onContextCreate={onContextCreate} style={StyleSheet.absoluteFill} />;
-}
-
-function createVehicleModelFromPreview() {
-  const group = new THREE.Group();
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(VEHICLE_PREVIEW.positions, 3));
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(VEHICLE_PREVIEW.normals, 3));
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-
-  const paint = new THREE.MeshStandardMaterial({
-    color: 0xff3138,
-    metalness: 0.4,
-    roughness: 0.3,
-  });
-
-  const mesh = new THREE.Mesh(geometry, paint);
-  mesh.name = VEHICLE_PREVIEW.source;
-  group.add(mesh);
-
-  return group;
-}
-
-function prepareModel(model: THREE.Object3D) {
-  model.traverse((child) => {
-    if (child instanceof THREE.Mesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-      child.frustumCulled = false;
-    }
-  });
-
-  const bounds = new THREE.Box3().setFromObject(model);
-  const size = bounds.getSize(new THREE.Vector3());
-  const center = bounds.getCenter(new THREE.Vector3());
-  const largestSide = Math.max(size.x, size.y, size.z, 1);
-
-  model.position.sub(center);
-  model.scale.setScalar(2.85 / largestSide);
-  model.rotation.y = Math.PI / 2;
-
-  const settledBounds = new THREE.Box3().setFromObject(model);
-  model.position.y -= settledBounds.min.y + 0.18;
-}
 
 function toLngLat(coordinate: Coordinate): LngLat {
   return [coordinate.longitude, coordinate.latitude];

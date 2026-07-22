@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 
-import { defaultColors, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { typography, type ThemeColors } from '@/src/theme/tokens';
 
 export type DoughnutSegment = {
   label: string;
@@ -29,6 +30,8 @@ export function Doughnut({
   centerLabel,
   centerValue,
 }: DoughnutProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const total = segments.reduce((sum, s) => sum + s.value, 0);
@@ -62,7 +65,7 @@ export function Doughnut({
             cx={center}
             cy={center}
             r={radius}
-            stroke={defaultColors.divider}
+            stroke={colors.divider}
             strokeWidth={strokeWidth}
             fill="none"
           />
@@ -90,21 +93,22 @@ export function Doughnut({
   );
 }
 
-const styles = StyleSheet.create({
-  center: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerValue: {
-    color: defaultColors.textPrimary,
-    fontSize: typography.h1,
-    fontWeight: '800',
-  },
-  centerLabel: {
-    color: defaultColors.textSecondary,
-    fontSize: typography.caption,
-    marginTop: 2,
-    textTransform: 'uppercase',
-  },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    center: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    centerValue: {
+      color: c.textPrimary,
+      fontSize: typography.h1,
+      fontWeight: '800',
+    },
+    centerLabel: {
+      color: c.textSecondary,
+      fontSize: typography.caption,
+      marginTop: 2,
+      textTransform: 'uppercase',
+    },
+  });

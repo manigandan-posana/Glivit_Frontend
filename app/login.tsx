@@ -25,7 +25,8 @@ import { authStorage } from '@/src/services/authStorage';
 import { useLoginMutation } from '@/src/services/authApi';
 import { clearTenant, setCredentials } from '@/src/store/authSlice';
 import { useAppDispatch, useAppSelector } from '@/src/store/hooks';
-import { palette, radius, spacing, typography } from '@/src/theme/tokens';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const schema = z.object({
   username: z.string().trim().min(1, 'Username is required'),
@@ -37,6 +38,8 @@ export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const { colors: c } = useTheme();
+  const styles = React.useMemo(() => makeStyles(c), [c]);
   const tenant = useAppSelector((s) => s.auth.tenantConfig);
   const companyCode = useAppSelector((s) => s.auth.companyCode);
   const [login, { isLoading }] = useLoginMutation();
@@ -110,7 +113,7 @@ export default function LoginScreen() {
           {tenant?.logoUrl ? (
             <Image contentFit="contain" source={{ uri: tenant.logoUrl }} style={styles.logoImage} />
           ) : (
-            <MaterialCommunityIcons color={palette.white} name="crosshairs-gps" size={54} />
+            <MaterialCommunityIcons color="#FFFFFF" name="crosshairs-gps" size={54} />
           )}
         </View>
         <Text style={styles.appName}>{tenant?.appName ?? 'Glivt'}</Text>
@@ -166,7 +169,7 @@ export default function LoginScreen() {
         </View>
 
         <Pressable accessibilityRole="button" onPress={contactProvider} style={styles.contactCard}>
-          <MaterialCommunityIcons color={palette.primaryGreen} name="headset" size={22} />
+          <MaterialCommunityIcons color={c.accent} name="headset" size={22} />
           <Text style={styles.contactText}>Contact Service Provider</Text>
         </Pressable>
 
@@ -180,60 +183,68 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: palette.loginBackground },
-  content: {
-    alignItems: 'center',
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xxl,
-  },
-  logo: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderRadius: 999,
-    height: 100,
-    justifyContent: 'center',
-    overflow: 'hidden',
-    width: 100,
-  },
-  logoImage: { height: 100, width: 100 },
-  appName: {
-    color: '#FDFDFD',
-    fontSize: typography.h1,
-    fontWeight: '800',
-    marginTop: spacing.md,
-  },
-  form: {
-    backgroundColor: palette.cardBackground,
-    borderRadius: radius.lg,
-    marginTop: spacing.xl,
-    padding: spacing.lg,
-    width: '100%',
-  },
-  gap: { height: spacing.md },
-  formError: {
-    color: palette.errorRed,
-    fontSize: typography.label,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  submit: { marginTop: spacing.lg },
-  link: { alignSelf: 'center', marginTop: spacing.md, padding: spacing.xs },
-  linkText: { color: palette.blue, fontSize: typography.label, fontWeight: '600' },
-  contactCard: {
-    alignItems: 'center',
-    backgroundColor: palette.cardBackground,
-    borderRadius: radius.lg,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    justifyContent: 'center',
-    marginTop: spacing.lg,
-    paddingVertical: spacing.md,
-    width: '100%',
-  },
-  contactText: { color: palette.textPrimary, fontSize: typography.body, fontWeight: '700' },
-  clearCode: { marginTop: spacing.lg, padding: spacing.sm },
-  clearCodeText: { color: 'rgba(255,255,255,0.85)', fontSize: typography.caption },
-  clearCodeStrong: { color: palette.white, fontWeight: '800' },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    flex: { flex: 1, backgroundColor: c.loginBackground },
+    content: {
+      alignItems: 'center',
+      flexGrow: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xxl,
+    },
+    logo: {
+      alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      borderColor: 'rgba(255,255,255,0.22)',
+      borderRadius: 999,
+      borderWidth: 1,
+      height: 100,
+      justifyContent: 'center',
+      overflow: 'hidden',
+      width: 100,
+    },
+    logoImage: { height: 100, width: 100 },
+    appName: {
+      color: '#FFFFFF',
+      fontSize: typography.h1,
+      fontWeight: '800',
+      letterSpacing: 0.3,
+      marginTop: spacing.md,
+    },
+    form: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.xl,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      marginTop: spacing.xl,
+      padding: spacing.lg,
+      width: '100%',
+    },
+    gap: { height: spacing.md },
+    formError: {
+      color: c.danger,
+      fontSize: typography.label,
+      marginTop: spacing.md,
+      textAlign: 'center',
+    },
+    submit: { marginTop: spacing.lg },
+    link: { alignSelf: 'center', marginTop: spacing.md, padding: spacing.xs },
+    linkText: { color: c.info, fontSize: typography.label, fontWeight: '600' },
+    contactCard: {
+      alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.08)',
+      borderColor: 'rgba(255,255,255,0.16)',
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.sm,
+      justifyContent: 'center',
+      marginTop: spacing.lg,
+      paddingVertical: spacing.md,
+      width: '100%',
+    },
+    contactText: { color: '#FFFFFF', fontSize: typography.body, fontWeight: '700' },
+    clearCode: { marginTop: spacing.lg, padding: spacing.sm },
+    clearCodeText: { color: 'rgba(255,255,255,0.85)', fontSize: typography.caption },
+    clearCodeStrong: { color: '#FFFFFF', fontWeight: '800' },
+  });

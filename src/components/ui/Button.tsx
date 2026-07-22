@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,15 +8,18 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { defaultColors, layout, radius, spacing, typography } from '@/src/theme/tokens';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTheme } from '@/src/theme/ThemeProvider';
+import { layout, radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type ButtonProps = {
   label: string;
   onPress?: () => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: 'primary' | 'secondary' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   color?: string;
+  icon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   style?: ViewStyle;
 };
 
@@ -31,12 +34,28 @@ export function Button({
   disabled = false,
   variant = 'primary',
   color,
+  icon,
   style,
 }: ButtonProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const isDisabled = disabled || loading;
+
   const background =
-    variant === 'primary' ? color || defaultColors.primary : variant === 'secondary' ? '#EFEFEF' : 'transparent';
-  const textColor = variant === 'primary' ? '#FFFFFF' : defaultColors.textPrimary;
+    variant === 'primary'
+      ? color || colors.primary
+      : variant === 'danger'
+        ? colors.danger
+        : variant === 'secondary'
+          ? colors.surfaceAlt
+          : 'transparent';
+  const textColor =
+    variant === 'primary'
+      ? colors.onPrimary
+      : variant === 'danger'
+        ? colors.white
+        : colors.textPrimary;
+  const bordered = variant === 'secondary' || variant === 'ghost';
 
   return (
     <Pressable
@@ -46,7 +65,13 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
-        { backgroundColor: background, opacity: isDisabled ? 0.6 : pressed ? 0.9 : 1 },
+        {
+          backgroundColor: background,
+          borderColor: bordered ? colors.borderStrong : 'transparent',
+          borderWidth: bordered ? StyleSheet.hairlineWidth * 2 : 0,
+          opacity: isDisabled ? 0.5 : pressed ? 0.88 : 1,
+          transform: [{ scale: pressed && !isDisabled ? 0.99 : 1 }],
+        },
         variant === 'ghost' && styles.ghost,
         style,
       ]}>
@@ -54,6 +79,7 @@ export function Button({
         <ActivityIndicator color={textColor} />
       ) : (
         <View style={styles.content}>
+          {icon ? <MaterialCommunityIcons color={textColor} name={icon} size={18} /> : null}
           <Text style={[styles.label, { color: textColor }]}>{label}</Text>
         </View>
       )}
@@ -61,27 +87,29 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
-  base: {
-    alignItems: 'center',
-    borderRadius: radius.sm,
-    height: layout.buttonHeight,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    width: '100%',
-  },
-  ghost: {
-    height: undefined,
-    paddingVertical: spacing.sm,
-    width: undefined,
-  },
-  content: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  label: {
-    fontSize: typography.body,
-    fontWeight: '700',
-  },
-});
+const makeStyles = (c: ThemeColors) =>
+  StyleSheet.create({
+    base: {
+      alignItems: 'center',
+      borderRadius: radius.md,
+      height: layout.buttonHeight,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+      width: '100%',
+    },
+    ghost: {
+      height: undefined,
+      paddingVertical: spacing.sm,
+      width: undefined,
+    },
+    content: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    label: {
+      fontSize: typography.body,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
+  });

@@ -11,6 +11,13 @@ import { authStorage } from '@/src/services/authStorage';
 import { hydrate } from '@/src/store/authSlice';
 import { useAppDispatch } from '@/src/store/hooks';
 import { store } from '@/src/store/store';
+import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
+
+/** Status bar content colour follows the active theme. */
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? 'light' : 'dark'} translucent />;
+}
 
 // Keep the native splash up until persisted auth/branding is loaded, so no
 // default React Native / placeholder screen flashes.
@@ -44,17 +51,20 @@ export default function RootLayout() {
     <Provider store={store}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <Bootstrapper>
-            <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="company-code" />
-              <Stack.Screen name="login" />
-              <Stack.Screen name="device-profile" />
-              <Stack.Screen name="live-track" />
-              <Stack.Screen name="(app)" />
-            </Stack>
-          </Bootstrapper>
-          <StatusBar style="light" translucent />
+          <ThemeProvider>
+            <Bootstrapper>
+              <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="company-code" />
+                <Stack.Screen name="login" />
+                <Stack.Screen name="device-profile" />
+                <Stack.Screen name="live-track" />
+                <Stack.Screen name="trip-playback" />
+                <Stack.Screen name="(app)" />
+              </Stack>
+            </Bootstrapper>
+            <ThemedStatusBar />
+          </ThemeProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </Provider>
