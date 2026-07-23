@@ -78,7 +78,7 @@ export default function SettingsScreen() {
         <Text style={styles.title}>Map & Tracking</Text>
         <Segment
           label="Map style"
-          options={['street', 'satellite', 'dark']}
+          options={['street', 'bright', 'dark']}
           value={draft.mapStyle}
           onChange={(mapStyle) => setDraft((v) => v && { ...v, mapStyle })}
         />

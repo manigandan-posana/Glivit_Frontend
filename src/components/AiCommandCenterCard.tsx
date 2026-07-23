@@ -1,8 +1,10 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useGetDashboardSummaryQuery } from '@/src/services/aiApi';
 import { Card } from '@/src/components/ui/Card';
+import { AnimatedCount, PulseDot, enterUp } from '@/src/components/ui/Motion';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
@@ -41,6 +43,10 @@ export function AiCommandCenterCard() {
       <View style={styles.header}>
         <MaterialCommunityIcons name="brain" size={22} color={c.primary} />
         <Text style={styles.title}>AI Command Center</Text>
+        <View style={styles.liveBadge}>
+          <PulseDot color={c.primary} size={7} />
+          <Text style={styles.liveText}>LIVE</Text>
+        </View>
       </View>
 
       <View style={styles.summaryContainer}>
@@ -48,17 +54,17 @@ export function AiCommandCenterCard() {
       </View>
 
       <View style={styles.grid}>
-        <Metric styles={styles} label="Fleet Health" value={`${summary.fleetHealthScore.toFixed(0)}%`} color={healthColor} />
-        <Metric styles={styles} label="Active Alerts" value={String(summary.unacknowledgedAiAlerts)} color={summary.unacknowledgedAiAlerts > 0 ? c.danger : c.textPrimary} />
-        <Metric styles={styles} label="Risky Drivers" value={String(summary.riskyDriversCount)} color={summary.riskyDriversCount > 0 ? c.warningOrange : c.textPrimary} />
-        <Metric styles={styles} label="Maint. Risk" value={String(summary.highRiskMaintenanceCount)} color={summary.highRiskMaintenanceCount > 0 ? c.danger : c.textPrimary} />
+        <Metric styles={styles} index={0} label="Fleet Health" value={summary.fleetHealthScore} suffix="%" color={healthColor} />
+        <Metric styles={styles} index={1} label="Active Alerts" value={summary.unacknowledgedAiAlerts} color={summary.unacknowledgedAiAlerts > 0 ? c.danger : c.textPrimary} />
+        <Metric styles={styles} index={2} label="Risky Drivers" value={summary.riskyDriversCount} color={summary.riskyDriversCount > 0 ? c.warningOrange : c.textPrimary} />
+        <Metric styles={styles} index={3} label="Maint. Risk" value={summary.highRiskMaintenanceCount} color={summary.highRiskMaintenanceCount > 0 ? c.danger : c.textPrimary} />
       </View>
 
       {summary.recentCriticalEvents.length > 0 && (
         <View style={styles.eventsSection}>
           <Text style={styles.eventsTitle}>Recent Critical Events</Text>
-          {summary.recentCriticalEvents.slice(0, 4).map((event) => (
-            <View key={event.id} style={styles.eventRow}>
+          {summary.recentCriticalEvents.slice(0, 4).map((event, i) => (
+            <Animated.View key={event.id} entering={enterUp(i)} style={styles.eventRow}>
               <MaterialCommunityIcons
                 name={event.eventType === 'SPEEDING' ? 'speedometer' : 'alert'}
                 size={16}
@@ -67,7 +73,7 @@ export function AiCommandCenterCard() {
               <Text style={styles.eventText} numberOfLines={1}>
                 {event.explanation ?? event.eventType}
               </Text>
-            </View>
+            </Animated.View>
           ))}
         </View>
       )}
@@ -77,20 +83,24 @@ export function AiCommandCenterCard() {
 
 function Metric({
   styles,
+  index,
   label,
   value,
+  suffix,
   color,
 }: {
   styles: ReturnType<typeof makeStyles>;
+  index: number;
   label: string;
-  value: string;
+  value: number;
+  suffix?: string;
   color: string;
 }) {
   return (
-    <View style={styles.gridItem}>
+    <Animated.View entering={enterUp(index)} style={styles.gridItem}>
       <Text style={styles.gridLabel}>{label}</Text>
-      <Text style={[styles.gridValue, { color }]}>{value}</Text>
-    </View>
+      <AnimatedCount value={value} suffix={suffix} style={[styles.gridValue, { color }]} />
+    </Animated.View>
   );
 }
 
@@ -114,6 +124,22 @@ const makeStyles = (c: ThemeColors) =>
       fontSize: typography.title,
       fontWeight: '800',
       color: c.textPrimary,
+      flex: 1,
+    },
+    liveBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+    },
+    liveText: {
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 0.5,
+      color: c.primary,
     },
     summaryContainer: {
       backgroundColor: c.surfaceAlt,

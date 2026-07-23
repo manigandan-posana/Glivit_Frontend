@@ -5,21 +5,89 @@ import { PixelRatio, Platform, StyleSheet, View } from 'react-native';
 import * as THREE from 'three';
 
 /**
- * Lightweight 3D vehicle marker.
+ * 3D vehicle marker.
  *
- * Renders a stylised low-poly car built procedurally with `three` on an
- * `expo-gl` context (no `expo-three`, no oversized FBX asset — the 111MB source
- * model is kept out of the runtime bundle). Geometry is shared across every
- * instance; only the tint material is per-marker. Heading is interpolated with
+ * Renders the real vehicle model on an `expo-gl` context. The geometry is the
+ * actual car mesh baked from `model.fbx` to a compact positions+normals JSON
+ * (`models/model.preview.json`, ~2.5MB / 54k verts) at build time, so the real
+ * shape ships without the 111MB FBX or 29MB GLB ever entering the bundle. The
+ * mesh is loaded once, centred, ground-seated and shared across every instance;
+ * only the tint material is per-marker. Heading is interpolated with
  * shortest-angle rotation so it never spins the long way round at the 359°→0°
  * seam, and all WebGL resources are disposed on unmount. Falls back to a crisp
- * 2D navigation glyph when WebGL is unavailable or the context fails.
+ * 2D navigation glyph when WebGL is unavailable, the context fails, or the model
+ * cannot be parsed.
+ *
+ * Note: the baked asset is a single fused mesh (no named nodes), so per-part
+ * animation (spinning wheels, brake-light materials) is intentionally not done
+ * here — that would need the rigged GLB, which we deliberately keep out of the
+ * runtime bundle. Heading easing + a parked idle bob are applied to the whole
+ * model instead.
  */
 
-// Shared, reused across all markers — created once, never disposed per-instance.
+// Target length (scene units) the model is scaled to, tuned to the camera below.
+const MODEL_TARGET_LENGTH = 3.6;
+// The baked model's longest axis is X; rotate it a quarter-turn so its length
+// runs along Z (screen "forward") to match the heading convention. Flip by PI
+// here if the model ever renders nose-backwards after a visual check.
+const MODEL_YAW_OFFSET = Math.PI / 2;
+
+// Shared low-poly fallback parts (used only if the baked model fails to load).
 const BODY_GEO = new THREE.BoxGeometry(2, 0.55, 4);
 const CABIN_GEO = new THREE.BoxGeometry(1.6, 0.55, 1.9);
 const WHEEL_GEO = new THREE.CylinderGeometry(0.45, 0.45, 0.4, 14);
+
+// Shared, lazily-built real-model geometry. `null` before first load; once
+// `modelLoadFailed` is set, callers use the procedural fallback instead.
+let MODEL_GEO: THREE.BufferGeometry | null = null;
+let modelLoadFailed = false;
+
+function getModelGeometry(): THREE.BufferGeometry | null {
+  if (MODEL_GEO || modelLoadFailed) return MODEL_GEO;
+  try {
+    // Metro bundles the JSON as a module (positions + normals float arrays).
+    const data = require('../../models/model.preview.json') as {
+      positions: number[];
+      normals: number[];
+    };
+    if (!data?.positions?.length) throw new Error('empty model positions');
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
+    if (data.normals?.length === data.positions.length) {
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(data.normals, 3));
+    } else {
+      geo.computeVertexNormals();
+    }
+
+    // Centre on the origin.
+    geo.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geo.boundingBox!.getCenter(center);
+    geo.translate(-center.x, -center.y, -center.z);
+
+    // Orient length along Z, then scale to a consistent on-screen size.
+    geo.rotateY(MODEL_YAW_OFFSET);
+    geo.computeBoundingBox();
+    const dims = new THREE.Vector3();
+    geo.boundingBox!.getSize(dims);
+    const longest = Math.max(dims.x, dims.y, dims.z) || 1;
+    const scale = MODEL_TARGET_LENGTH / longest;
+    geo.scale(scale, scale, scale);
+
+    // Seat the wheels on the ground plane (y = 0).
+    geo.computeBoundingBox();
+    geo.translate(0, -geo.boundingBox!.min.y, 0);
+    geo.computeBoundingSphere();
+
+    MODEL_GEO = geo;
+    return geo;
+  } catch (err) {
+    console.warn('[Vehicle3DMarker] baked model load failed, using procedural car', err);
+    modelLoadFailed = true;
+    return null;
+  }
+}
 
 interface Vehicle3DMarkerProps {
   heading: number;
@@ -38,6 +106,17 @@ function lerpAngle(current: number, target: number, t: number): number {
 
 function buildCar(color: string): { group: THREE.Group; materials: THREE.Material[] } {
   const group = new THREE.Group();
+
+  // Preferred path: the real baked vehicle mesh (shared geometry, tinted).
+  const modelGeo = getModelGeometry();
+  if (modelGeo) {
+    const bodyMat = new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.45 });
+    const model = new THREE.Mesh(modelGeo, bodyMat);
+    group.add(model);
+    return { group, materials: [bodyMat] };
+  }
+
+  // Fallback: procedural low-poly car if the model asset can't be parsed.
   const bodyMat = new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 });
   const cabinMat = new THREE.MeshStandardMaterial({ color: '#e8eef5', metalness: 0.1, roughness: 0.4 });
   const wheelMat = new THREE.MeshStandardMaterial({ color: '#1b1f24', metalness: 0.2, roughness: 0.8 });
@@ -97,7 +176,8 @@ export const Vehicle3DMarker: React.FC<Vehicle3DMarkerProps> = ({
 
       renderer = new THREE.WebGLRenderer({ context: gl, antialias: true, alpha: true });
       renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
-      renderer.setPixelRatio(PixelRatio.get());
+      // Cap DPR: this marker is ~56px, so 3x pixels is wasted GPU/battery.
+      renderer.setPixelRatio(Math.min(2, PixelRatio.get()));
 
       scene.add(new THREE.AmbientLight(0xffffff, 0.75));
       const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -111,15 +191,27 @@ export const Vehicle3DMarker: React.FC<Vehicle3DMarkerProps> = ({
       car.rotation.y = THREE.MathUtils.degToRad(-heading);
       scene.add(car);
 
+      let firstFrame = true;
       const render = () => {
         frame = requestAnimationFrame(render);
         const p = propsRef.current;
+        // Idle-skip: only touch the GPU when something is actually moving —
+        // the heading is still easing toward its target, or the parked "bob"
+        // is running. A stationary vehicle costs one cheap JS frame, no draw.
+        let dirty = false;
         if (car) {
           const target = THREE.MathUtils.degToRad(-p.heading);
+          const before = car.rotation.y;
           // Snap when nearly aligned; otherwise ease with shortest-angle lerp.
-          car.rotation.y = lerpAngle(car.rotation.y, target, 0.18);
-          car.position.y = p.isActive && p.speed <= 0.5 ? Math.sin(Date.now() * 0.004) * 0.12 : 0;
+          car.rotation.y = lerpAngle(before, target, 0.18);
+          if (Math.abs(car.rotation.y - before) > 0.0004) dirty = true;
+
+          const bob = p.isActive && p.speed <= 0.5 ? Math.sin(Date.now() * 0.004) * 0.12 : 0;
+          if (Math.abs(bob - car.position.y) > 0.0004) dirty = true;
+          car.position.y = bob;
         }
+        if (!dirty && !firstFrame) return;
+        firstFrame = false;
         renderer!.render(scene, camera);
         gl.endFrameEXP();
       };

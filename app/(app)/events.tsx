@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
+import { PressableScale, enterUp } from '@/src/components/ui/Motion';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useAcknowledgeEventMutation, useGetEventsQuery } from '@/src/services/operationsApi';
@@ -85,12 +87,12 @@ export default function EventsScreen() {
           </View>
         }
         ListEmptyComponent={<EmptyView icon="bell-off-outline" title="No events" message="Alerts will appear here." />}
-        renderItem={({ item }: { item: any }) => {
+        renderItem={({ item, index }: { item: any; index: number }) => {
           const color = severityColors[item.severity] ?? c.textSecondary;
           const isAckLoading = (isAcking || isAckingAi) && pendingId === item.id;
           const isAi = activeTab === 'AI';
           return (
-            <View style={styles.card}>
+            <Animated.View entering={enterUp(index)} style={styles.card}>
               <View style={[styles.icon, { backgroundColor: `${color}18` }]}>
                 <MaterialCommunityIcons color={color} name="bell-alert-outline" size={22} />
               </View>
@@ -117,27 +119,28 @@ export default function EventsScreen() {
                 {isAi && (
                   <View style={styles.feedbackRow}>
                     <Text style={styles.feedbackLabel}>Helpful?</Text>
-                    <Pressable onPress={() => onFeedback(item.id, true)} style={styles.feedbackBtn}>
+                    <PressableScale haptic onPress={() => onFeedback(item.id, true)} style={styles.feedbackBtn}>
                       <MaterialCommunityIcons name="thumb-up-outline" size={16} color={c.textSecondary} />
-                    </Pressable>
-                    <Pressable onPress={() => onFeedback(item.id, false)} style={styles.feedbackBtn}>
+                    </PressableScale>
+                    <PressableScale haptic onPress={() => onFeedback(item.id, false)} style={styles.feedbackBtn}>
                       <MaterialCommunityIcons name="thumb-down-outline" size={16} color={c.textSecondary} />
-                    </Pressable>
+                    </PressableScale>
                   </View>
                 )}
               </View>
               {item.acknowledged ? (
                 <MaterialCommunityIcons color={c.primaryGreen} name="check-circle" size={22} />
               ) : (
-                <Pressable
+                <PressableScale
+                  haptic
                   accessibilityRole="button"
                   disabled={isAckLoading}
                   onPress={() => onAcknowledge(item.id, isAi)}
                   style={styles.ackButton}>
                   <Text style={styles.ackText}>{isAckLoading ? '...' : 'Ack'}</Text>
-                </Pressable>
+                </PressableScale>
               )}
-            </View>
+            </Animated.View>
           );
         }}
       />

@@ -1,9 +1,11 @@
 import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { Card } from '@/src/components/ui/Card';
 import { Doughnut, type DoughnutSegment } from '@/src/components/ui/Doughnut';
+import { AnimatedCount, PressableScale, enterUp } from '@/src/components/ui/Motion';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { AiCommandCenterCard } from '@/src/components/AiCommandCenterCard';
 import { apiErrorMessage } from '@/src/services/apiError';
@@ -53,41 +55,44 @@ export default function DashboardScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={c.primary} />}>
       
-      <AiCommandCenterCard />
+      <Animated.View entering={enterUp(0)}>
+        <AiCommandCenterCard />
+      </Animated.View>
 
-      <Card style={styles.chartCard}>
-        <Text style={styles.sectionTitle}>Fleet Status</Text>
-        {isEmptyFleet ? (
-          <EmptyView icon="car-off" title="No vehicles yet" message="Devices will appear here once added." />
-        ) : (
-          <View style={styles.chartRow}>
-            <Doughnut centerLabel="Total" centerValue={data.total} segments={segments} />
-          </View>
-        )}
-        <Text style={styles.updated}>Last updated {formatTime(data.lastUpdated)}</Text>
-      </Card>
+      <Animated.View entering={enterUp(1)}>
+        <Card style={styles.chartCard}>
+          <Text style={styles.sectionTitle}>Fleet Status</Text>
+          {isEmptyFleet ? (
+            <EmptyView icon="car-off" title="No vehicles yet" message="Devices will appear here once added." />
+          ) : (
+            <View style={styles.chartRow}>
+              <Doughnut centerLabel="Total" centerValue={data.total} segments={segments} />
+            </View>
+          )}
+          <Text style={styles.updated}>Last updated {formatTime(data.lastUpdated)}</Text>
+        </Card>
+      </Animated.View>
 
       <View style={styles.grid}>
-        {cards.map((card) => (
-          <Pressable
-            key={card.key}
-            accessibilityRole="button"
-            onPress={() =>
-              router.push(
-                card.key === 'TOTAL'
-                  ? { pathname: '/vehicles' }
-                  : { pathname: '/vehicles', params: { state: card.key } }
-              )
-            }
-            style={({ pressed }) => [
-              styles.statusCard,
-              { borderColor: `${stateColors[card.key]}55` },
-              pressed && { opacity: 0.85 },
-            ]}>
-            <View style={[styles.dot, { backgroundColor: stateColors[card.key] }]} />
-            <Text style={[styles.statusCount, { color: stateColors[card.key] }]}>{card.count}</Text>
-            <Text style={styles.statusLabel}>{STATE_LABELS[card.key]}</Text>
-          </Pressable>
+        {cards.map((card, i) => (
+          <Animated.View key={card.key} entering={enterUp(i + 2)} style={styles.statusCardWrap}>
+            <PressableScale
+              haptic
+              accessibilityRole="button"
+              accessibilityLabel={`${STATE_LABELS[card.key]}: ${card.count}`}
+              onPress={() =>
+                router.push(
+                  card.key === 'TOTAL'
+                    ? { pathname: '/vehicles' }
+                    : { pathname: '/vehicles', params: { state: card.key } }
+                )
+              }
+              style={[styles.statusCard, { borderColor: `${stateColors[card.key]}55` }]}>
+              <View style={[styles.dot, { backgroundColor: stateColors[card.key] }]} />
+              <AnimatedCount value={card.count} style={[styles.statusCount, { color: stateColors[card.key] }]} />
+              <Text style={styles.statusLabel}>{STATE_LABELS[card.key]}</Text>
+            </PressableScale>
+          </Animated.View>
         ))}
       </View>
     </ScrollView>
@@ -114,13 +119,12 @@ const makeStyles = (c: ThemeColors) =>
     chartRow: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm },
     updated: { color: c.textMuted, fontSize: typography.caption, marginTop: spacing.md },
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    statusCardWrap: { flexBasis: '31.5%', flexGrow: 1 },
     statusCard: {
       backgroundColor: c.surface,
       borderColor: c.border,
       borderRadius: radius.md,
       borderWidth: StyleSheet.hairlineWidth * 2,
-      flexBasis: '31.5%',
-      flexGrow: 1,
       padding: spacing.md,
     },
     dot: { borderRadius: 6, height: 12, marginBottom: spacing.sm, width: 12 },

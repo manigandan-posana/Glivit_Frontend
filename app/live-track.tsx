@@ -1,6 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,7 +13,6 @@ import {
 } from 'react-native';
 import type { CameraRef, LngLat, MapRef } from '@maplibre/maplibre-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as THREE from 'three';
 
 import { FleetWebMap, type WebMapMarker } from '@/src/components/FleetWebMap';
 import { env } from '@/src/config/env';
@@ -22,10 +20,21 @@ import { useGetDevicePlaybackQuery } from '@/src/services/devicesApi';
 import { getMapStyle, getMapStyleInfo, toNativeStyle } from '@/src/services/mapStyle';
 import { isMapAvailable, MapLibre } from '@/src/services/maplibre';
 import { Vehicle3DMarker } from '@/src/components/Vehicle3DMarker';
+import {
+  buildPlaybackTrack,
+  sampleAt,
+  synthesizeDemoTrack,
+  type PlaybackTrack,
+} from '@/src/services/playbackEngine';
+import { useLivePositions } from '@/src/services/livePositions';
+import type { PlaybackTrackPoint } from '@/src/types/api';
 
 const VEHICLE_VIEW_SIZE = 164;
-const ROUTE_TICK_MS = 80;
-const ROUTE_LOOP_MS = 70000;
+// Playback clock tick. This advances a position on the *recorded* timeline; the
+// vehicle's location and speed always come from real GPS points, never fabricated.
+const PLAYBACK_TICK_MS = 50;
+const PLAYBACK_RATES = [1, 2, 4, 8] as const;
+type PlaybackRate = (typeof PLAYBACK_RATES)[number];
 const CONTACT_PHONE = '+919876543210';
 const MAP_LOAD_TIMEOUT_MS = 15000;
 
@@ -172,19 +181,31 @@ export default function VehicleTrackerScreen() {
     { skip: !hasRealDevice }
   );
   const realPointCount = playback?.points?.length ?? 0;
-  const route = useMemo<Coordinate[]>(() => {
-    const points = playback?.points;
-    if (points && points.length > 1) {
-      return points.map((p) => ({ latitude: p.lat, longitude: p.lng }));
+  // Phase 2: subscribe to the live position stream. For a real device this is
+  // the backend SSE feed; in dev demo mode it is the offline simulator (see
+  // useLivePositions). Live fixes are appended to recorded history so the same
+  // truthful interpolator drives both; with no feed `live.points` stays empty
+  // and behaviour is identical to pure history playback.
+  const liveDeviceId = deviceId != null && !Number.isNaN(deviceId) ? deviceId : undefined;
+  const liveEnabled = liveDeviceId != null && (hasRealDevice || env.demoMode);
+  const live = useLivePositions(liveEnabled ? liveDeviceId : undefined);
+  // Build a timestamp-aware playback track. Real devices use their recorded
+  // points (with real time/speed/course) extended by any live fixes; the
+  // no-device demo screen uses a clearly-synthetic demo track (never shown for a
+  // real vehicle).
+  const track = useMemo<PlaybackTrack>(() => {
+    const merged = mergeHistoryAndLive(playback?.points, live.points);
+    if (merged.length > 1) {
+      return buildPlaybackTrack(merged);
     }
-    // Demo route is a dev/offline fallback only; never rendered for a real
-    // device (the empty-state gate below returns before the map in that case).
-    return DEMO_ROUTE;
-  }, [playback]);
-  const totalDistanceKm = useMemo(
-    () => (playback?.distanceKm && playback.distanceKm > 0 ? playback.distanceKm : getRouteDistance(route)),
-    [playback, route]
+    return synthesizeDemoTrack(DEMO_ROUTE);
+  }, [playback?.points, live.points]);
+  const route = useMemo<Coordinate[]>(
+    () => track.points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
+    [track]
   );
+  const totalDistanceKm =
+    playback?.distanceKm && playback.distanceKm > 0 ? playback.distanceKm : track.totalDistanceKm;
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const mapRef = useRef<MapRef>(null);
@@ -193,8 +214,17 @@ export default function VehicleTrackerScreen() {
   const projectionRequestRef = useRef(0);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRouteFitRef = useRef(false);
-  const [routeProgress, setRouteProgress] = useState(0.285);
+  // Set once the user manually scrubs/opens history — stops live-follow from
+  // yanking the timeline back to "now" while they inspect the past.
+  const userSeekedRef = useRef(false);
+  // Position on the recorded timeline (ms since the first fix), plus transport.
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState<PlaybackRate>(1);
+  const [scrubWidth, setScrubWidth] = useState(0);
   const [isTracking, setIsTracking] = useState(true);
+  // Live-follow keeps the marker pinned to the newest streamed fix.
+  const [isLiveFollowing, setIsLiveFollowing] = useState(false);
+  const [liveAgeSec, setLiveAgeSec] = useState<number | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isTrafficVisible, setIsTrafficVisible] = useState(true);
   const [isNightMode, setIsNightMode] = useState(false);
@@ -210,15 +240,57 @@ export default function VehicleTrackerScreen() {
   const [toastText, setToastText] = useState('3D vehicle ready');
   const [vehicleScreenPoint, setVehicleScreenPoint] = useState<ScreenPoint | null>(null);
 
-  const routeSnapshot = useMemo(() => getRouteSnapshot(route, routeProgress), [route, routeProgress]);
-  const vehicleCoordinate = routeSnapshot.coordinate;
-  const heading = routeSnapshot.heading;
-  const completedRoute = routeSnapshot.completedRoute;
-  const currentSpeed = Math.max(0, Math.round(isTracking ? 46 + Math.sin(routeProgress * 18) * 7 : 0));
+  const sample = useMemo(() => sampleAt(track, elapsedMs), [track, elapsedMs]);
+  const vehicleCoordinate = useMemo<Coordinate>(
+    () =>
+      sample
+        ? { latitude: sample.latitude, longitude: sample.longitude }
+        : route[0] ?? { latitude: 0, longitude: 0 },
+    [sample, route]
+  );
+  const heading = sample?.heading ?? 0;
+  const completedRoute = useMemo<Coordinate[]>(() => sample?.completed ?? [], [sample]);
+  const coveredKm = sample?.distanceKm ?? 0;
+  // Speed is the recorded value at the current point — never synthesized.
+  const currentSpeed = Math.max(0, Math.round(sample?.speed ?? 0));
+  const progress = track.totalDurationMs > 0 ? elapsedMs / track.totalDurationMs : 0;
+  const routePercent = Math.round(progress * 100);
   const status = isAlertActive ? 'Alert' : isTracking ? 'Running' : 'Stopped';
-  const pingTime = useMemo(() => formatPingTime(new Date()), []);
+  // Ping time reflects the last recorded fix, not wall-clock.
+  const pingTime = useMemo(() => {
+    const last = track.points[track.points.length - 1];
+    const parsed = last?.t ? new Date(last.t) : new Date();
+    return formatPingTime(Number.isNaN(parsed.getTime()) ? new Date() : parsed);
+  }, [track]);
+
+  const seekToFraction = useCallback(
+    (fraction: number) => {
+      const clamped = Math.min(Math.max(fraction, 0), 1);
+      // Manual scrub leaves live-follow — the user is inspecting the past.
+      userSeekedRef.current = true;
+      setIsLiveFollowing(false);
+      setElapsedMs(clamped * track.totalDurationMs);
+    },
+    [track.totalDurationMs]
+  );
+  const seekByFraction = useCallback(
+    (delta: number) => {
+      userSeekedRef.current = true;
+      setIsLiveFollowing(false);
+      setElapsedMs((current) =>
+        Math.min(Math.max(current + delta * track.totalDurationMs, 0), track.totalDurationMs)
+      );
+    },
+    [track.totalDurationMs]
+  );
+  const jumpToLive = useCallback(() => {
+    userSeekedRef.current = false;
+    setIsLiveFollowing(true);
+    setIsTracking(true);
+    setElapsedMs(track.totalDurationMs);
+  }, [track.totalDurationMs]);
   const mapStyleInfo = useMemo(
-    () => getMapStyleInfo(isNightMode ? 'dark' : isSatelliteMode ? 'satellite' : 'street'),
+    () => getMapStyleInfo(isNightMode ? 'dark' : isSatelliteMode ? 'bright' : 'street'),
     [isNightMode, isSatelliteMode]
   );
   const mapStyleUrl = useMemo(() => toNativeStyle(mapStyleInfo.style), [mapStyleInfo.style]);
@@ -229,8 +301,7 @@ export default function VehicleTrackerScreen() {
     x: width / 2,
     y: height * 0.52,
   };
-  const remainingDistanceKm = Math.max(totalDistanceKm - routeSnapshot.distanceKm, 0);
-  const routePercent = Math.round(routeProgress * 100);
+  const remainingDistanceKm = Math.max(totalDistanceKm - coveredKm, 0);
   const selectedOptionData = useMemo<RouteOptionData | null>(() => {
     if (!selectedOptionId) return null;
 
@@ -252,7 +323,7 @@ export default function VehicleTrackerScreen() {
         icon: 'refresh',
         metrics: [
           { label: 'Progress', value: `${routePercent}%` },
-          { label: 'Covered', value: `${routeSnapshot.distanceKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
           { label: 'Ping', value: pingTime },
         ],
         summary: 'Route playback restarted and the marker is following the route again.',
@@ -297,31 +368,33 @@ export default function VehicleTrackerScreen() {
         metrics: [
           { label: 'Point', value: coordinateLabel },
           { label: 'Address', value: vehicleSubtitle },
-          { label: 'Covered', value: `${routeSnapshot.distanceKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
         ],
         summary: 'Camera centered on the current playback marker.',
         title: 'Location',
         tone: 'green',
       },
       traffic: {
-        icon: 'traffic-light',
+        icon: 'road-variant',
         metrics: [
-          { label: 'Traffic', value: isTrafficVisible ? 'Visible' : 'Hidden' },
+          { label: 'Highlight', value: isTrafficVisible ? 'Visible' : 'Hidden' },
           { label: 'Remaining', value: `${remainingDistanceKm.toFixed(1)} km` },
           { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
         ],
-        summary: isTrafficVisible ? 'Traffic-colored route overlay is visible.' : 'Traffic overlay is hidden; route remains visible.',
-        title: 'Traffic',
+        // No live congestion data yet: this only recolours the route, so it is
+        // labelled "Route Highlight" rather than "Traffic".
+        summary: isTrafficVisible ? 'Route highlight overlay is visible.' : 'Route highlight is hidden; route remains visible.',
+        title: 'Route Highlight',
         tone: isTrafficVisible ? 'green' : 'orange',
       },
       mapType: {
         icon: 'rhombus-outline',
         metrics: [
-          { label: 'Map', value: isSatelliteMode ? 'Hybrid' : 'Standard' },
+          { label: 'Map', value: isSatelliteMode ? 'Bright' : 'Standard' },
           { label: 'Provider', value: mapProvider },
           { label: 'Style', value: isNightMode ? 'Night' : 'Day' },
         ],
-        summary: isSatelliteMode ? 'Hybrid road-map style is selected.' : 'Standard road-map style is selected.',
+        summary: isSatelliteMode ? 'Bright road-map style is selected.' : 'Standard road-map style is selected.',
         title: 'Map Type',
         tone: 'orange',
       },
@@ -340,7 +413,7 @@ export default function VehicleTrackerScreen() {
         icon: 'weather-night',
         metrics: [
           { label: 'Theme', value: isNightMode ? 'Night' : 'Day' },
-          { label: 'Map', value: isSatelliteMode ? 'Hybrid' : 'Standard' },
+          { label: 'Map', value: isSatelliteMode ? 'Bright' : 'Standard' },
           { label: 'Provider', value: mapProvider },
         ],
         summary: isNightMode ? 'Night road-map style is active.' : 'Day road-map style is active.',
@@ -350,7 +423,7 @@ export default function VehicleTrackerScreen() {
       history: {
         icon: 'history',
         metrics: [
-          { label: 'Covered', value: `${routeSnapshot.distanceKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
           { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
           { label: 'Ping', value: pingTime },
         ],
@@ -374,7 +447,7 @@ export default function VehicleTrackerScreen() {
     pingTime,
     remainingDistanceKm,
     routePercent,
-    routeSnapshot.distanceKm,
+    coveredKm,
     selectedOptionId,
     status,
     totalDistanceKm,
@@ -494,18 +567,59 @@ export default function VehicleTrackerScreen() {
   }, []);
 
   useEffect(() => {
-    // Animation only runs on the native map; the web fallback shows a static
-    // route + marker so the WebView is never reloaded on every tick.
-    if (!isTracking || !isMapAvailable) {
+    // Playback clock. Advances a position on the recorded timeline at the chosen
+    // rate and stops at the end (no looping). Position/speed stay real; only the
+    // scrub speed through recorded data changes. Disabled while live-following,
+    // where the marker is pinned to the newest streamed fix instead. Animation
+    // only runs on the native map; the web fallback shows a static route.
+    if (!isTracking || isLiveFollowing || !isMapAvailable || track.totalDurationMs <= 0) {
       return;
     }
 
     const timer = setInterval(() => {
-      setRouteProgress((current) => (current + ROUTE_TICK_MS / ROUTE_LOOP_MS) % 1);
-    }, ROUTE_TICK_MS);
+      setElapsedMs((current) => {
+        const next = current + PLAYBACK_TICK_MS * playbackRate;
+        return next >= track.totalDurationMs ? track.totalDurationMs : next;
+      });
+    }, PLAYBACK_TICK_MS);
 
     return () => clearInterval(timer);
-  }, [isTracking]);
+  }, [isTracking, isLiveFollowing, playbackRate, track.totalDurationMs]);
+
+  useEffect(() => {
+    // Auto-pause when history playback reaches the end (never while following live).
+    if (!isLiveFollowing && isTracking && track.totalDurationMs > 0 && elapsedMs >= track.totalDurationMs) {
+      setIsTracking(false);
+    }
+  }, [elapsedMs, isLiveFollowing, isTracking, track.totalDurationMs]);
+
+  useEffect(() => {
+    // Engage live-follow automatically the first time a live fix arrives, unless
+    // the user has already taken manual control of the timeline.
+    if (live.points.length > 0 && !userSeekedRef.current && !isLiveFollowing) {
+      setIsLiveFollowing(true);
+    }
+  }, [live.points.length, isLiveFollowing]);
+
+  useEffect(() => {
+    // While following, keep the marker pinned to the newest fix as the track grows.
+    if (isLiveFollowing) {
+      setElapsedMs(track.totalDurationMs);
+    }
+  }, [isLiveFollowing, track.totalDurationMs]);
+
+  useEffect(() => {
+    // Tick the "last update" age once a second while a live feed is active.
+    if (!liveEnabled) {
+      setLiveAgeSec(null);
+      return;
+    }
+    const update = () =>
+      setLiveAgeSec(live.lastEventAt ? Math.round((Date.now() - live.lastEventAt) / 1000) : null);
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [liveEnabled, live.lastEventAt]);
 
   const fallbackMarkers = useMemo<WebMapMarker[]>(
     () => [
@@ -578,10 +692,11 @@ export default function VehicleTrackerScreen() {
 
   const isMapLoading = mapLoadState === 'loading' || !mapContainerReady;
 
-  // Real device with no usable history: show a loading state while the
-  // playback query resolves, then a proper empty state. Never fall back to the
-  // demo route for a real device (no fabricated GPS movement in production).
-  if (hasRealDevice && (playbackLoading || realPointCount <= 1)) {
+  // Real device with no usable history AND no live fixes yet: show a loading
+  // state while the playback query resolves, then a proper empty state. Never
+  // fall back to the demo route for a real device (no fabricated GPS movement in
+  // production). Live streaming alone is enough to render the map.
+  if (hasRealDevice && live.points.length === 0 && (playbackLoading || realPointCount <= 1)) {
     return (
       <View style={styles.screen}>
         <View style={[styles.headerCard, { top: insets.top + 12 }]}>
@@ -788,6 +903,10 @@ export default function VehicleTrackerScreen() {
         <Pressable
           accessibilityRole="button"
           onPress={() => {
+            if (isLiveFollowing) {
+              userSeekedRef.current = true;
+              setIsLiveFollowing(false);
+            }
             setIsTracking((current) => !current);
             setIsAlertActive(false);
             showToast(isTracking ? 'Vehicle paused' : 'Vehicle running');
@@ -796,6 +915,29 @@ export default function VehicleTrackerScreen() {
           <Text style={styles.statusPillText}>{status}</Text>
         </Pressable>
       </View>
+
+      {liveEnabled ? (
+        <Pressable
+          accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
+          accessibilityRole="button"
+          onPress={jumpToLive}
+          style={[
+            styles.livePill,
+            { top: insets.top + 92 },
+            isLiveFollowing && live.connected ? styles.livePillActive : styles.livePillIdle,
+          ]}>
+          <View
+            style={[
+              styles.liveDot,
+              { backgroundColor: live.connected ? BRAND.greenGlow : BRAND.muted },
+            ]}
+          />
+          <Text style={styles.livePillText}>
+            {isLiveFollowing ? 'LIVE' : 'GO LIVE'}
+            {liveAgeSec != null ? ` · ${formatAge(liveAgeSec)}` : live.connected ? ' · waiting' : ' · offline'}
+          </Text>
+        </Pressable>
+      ) : null}
 
       <View pointerEvents="box-none" style={[styles.sideRail, styles.leftRail, { top: insets.top + 158 }]}>
         <SideAction
@@ -814,7 +956,7 @@ export default function VehicleTrackerScreen() {
           icon="refresh"
           onPress={() => {
             setSelectedOptionId('refresh');
-            setRouteProgress(0.02);
+            setElapsedMs(0);
             setIsTracking(true);
             setIsFollowing(true);
             setIsAlertActive(false);
@@ -873,7 +1015,7 @@ export default function VehicleTrackerScreen() {
           onPress={() => {
             setSelectedOptionId('traffic');
             setIsTrafficVisible((current) => !current);
-            showToast(isTrafficVisible ? 'Traffic hidden' : 'Traffic visible');
+            showToast(isTrafficVisible ? 'Route highlight off' : 'Route highlight on');
           }}
           tone="light"
         />
@@ -883,7 +1025,7 @@ export default function VehicleTrackerScreen() {
           onPress={() => {
             setSelectedOptionId('mapType');
             setIsSatelliteMode((current) => !current);
-            showToast(isSatelliteMode ? 'Standard map' : 'Hybrid map');
+            showToast(isSatelliteMode ? 'Standard map' : 'Bright map');
           }}
         />
         <SideAction
@@ -891,7 +1033,7 @@ export default function VehicleTrackerScreen() {
           icon="directions"
           onPress={() => {
             setSelectedOptionId('direction');
-            setRouteProgress((current) => (current + 0.06) % 1);
+            seekByFraction(0.06);
             setIsFollowing(true);
             showToast('Next route segment');
           }}
@@ -936,8 +1078,35 @@ export default function VehicleTrackerScreen() {
           </View>
         </View>
 
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.round(routeProgress * 100)}%` }]} />
+        <Pressable
+          accessibilityLabel="Seek playback"
+          accessibilityRole="adjustable"
+          onLayout={(event) => setScrubWidth(event.nativeEvent.layout.width)}
+          onPress={(event) => {
+            if (scrubWidth > 0) {
+              seekToFraction(event.nativeEvent.locationX / scrubWidth);
+              setIsTracking(false);
+            }
+          }}
+          style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${routePercent}%` }]} />
+        </Pressable>
+
+        <View style={styles.rateRow}>
+          <Text style={styles.rateLabel}>{routePercent}%</Text>
+          <View style={styles.rateChips}>
+            {PLAYBACK_RATES.map((rate) => (
+              <Pressable
+                accessibilityRole="button"
+                key={rate}
+                onPress={() => setPlaybackRate(rate)}
+                style={[styles.rateChip, playbackRate === rate && styles.rateChipActive]}>
+                <Text style={[styles.rateChipText, playbackRate === rate && styles.rateChipTextActive]}>
+                  {rate}×
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
 
         {selectedOptionData ? (
@@ -946,14 +1115,20 @@ export default function VehicleTrackerScreen() {
 
         <View style={styles.sheetStats}>
           <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
-          <Metric icon="map-marker-distance" label="Covered" value={`${routeSnapshot.distanceKm.toFixed(1)} km`} />
+          <Metric icon="map-marker-distance" label="Covered" value={`${coveredKm.toFixed(1)} km`} />
           <Metric icon="flag-checkered" label="Trip" value={`${totalDistanceKm.toFixed(1)} km`} />
         </View>
 
         <View style={styles.sheetActions}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => setIsTracking((current) => !current)}
+            onPress={() => {
+              if (isLiveFollowing) {
+                userSeekedRef.current = true;
+                setIsLiveFollowing(false);
+              }
+              setIsTracking((current) => !current);
+            }}
             style={[styles.primaryAction, !isTracking && styles.primaryActionStopped]}>
             <MaterialCommunityIcons color="#fff" name={isTracking ? 'pause' : 'play'} size={25} />
             <Text style={styles.primaryActionText}>{isTracking ? 'Pause' : 'Resume'}</Text>
@@ -973,7 +1148,7 @@ export default function VehicleTrackerScreen() {
             accessibilityRole="button"
             onPress={() => {
               setSelectedOptionId('direction');
-              setRouteProgress((current) => Math.min(current + 0.08, 0.98));
+              seekByFraction(0.08);
               setIsFollowing(true);
               showToast('Route advanced');
             }}
@@ -997,8 +1172,8 @@ export default function VehicleTrackerScreen() {
             setIsHistoryVisible(false);
             showToast('History closed');
           }}
-          onSelect={(label, progress) => {
-            setRouteProgress(progress);
+          onSelect={(label, fraction) => {
+            seekToFraction(fraction);
             setIsTracking(false);
             setIsHistoryVisible(false);
             setIsFollowing(true);
@@ -1178,6 +1353,22 @@ function toLngLat(coordinate: Coordinate): LngLat {
   return [coordinate.longitude, coordinate.latitude];
 }
 
+/**
+ * Extends recorded history with live fixes newer than the last recorded point,
+ * so playback and live share one continuous track. Never mutates its inputs.
+ */
+function mergeHistoryAndLive(
+  history: PlaybackTrackPoint[] | undefined,
+  livePoints: PlaybackTrackPoint[]
+): PlaybackTrackPoint[] {
+  const hist = history ?? [];
+  if (livePoints.length === 0) return hist;
+  if (hist.length === 0) return livePoints;
+  const lastHistMs = Date.parse(hist[hist.length - 1].t);
+  const extra = livePoints.filter((p) => Date.parse(p.t) > lastHistMs);
+  return extra.length > 0 ? [...hist, ...extra] : hist;
+}
+
 function createLineFeature(route: Coordinate[]): GeoJSON.Feature<GeoJSON.LineString> {
   return {
     type: 'Feature',
@@ -1201,82 +1392,6 @@ function getRouteBounds(route: Coordinate[]) {
   ] as [number, number, number, number];
 }
 
-function getRouteSnapshot(route: Coordinate[], progress: number) {
-  const clampedProgress = ((progress % 1) + 1) % 1;
-  const routeDistance = getRouteDistance(route);
-  const targetDistance = routeDistance * clampedProgress;
-  let travelled = 0;
-
-  for (let index = 1; index < route.length; index += 1) {
-    const start = route[index - 1];
-    const end = route[index];
-    const segmentDistance = getDistance(start, end);
-
-    if (travelled + segmentDistance >= targetDistance) {
-      const segmentProgress = segmentDistance === 0 ? 0 : (targetDistance - travelled) / segmentDistance;
-      const coordinate = interpolateCoordinate(start, end, segmentProgress);
-
-      return {
-        completedRoute: [...route.slice(0, index), coordinate],
-        coordinate,
-        distanceKm: targetDistance,
-        heading: getBearing(start, end),
-      };
-    }
-
-    travelled += segmentDistance;
-  }
-
-  return {
-    completedRoute: route,
-    coordinate: route[route.length - 1],
-    distanceKm: routeDistance,
-    heading: getBearing(route[route.length - 2], route[route.length - 1]),
-  };
-}
-
-function interpolateCoordinate(start: Coordinate, end: Coordinate, progress: number) {
-  return {
-    latitude: start.latitude + (end.latitude - start.latitude) * progress,
-    longitude: start.longitude + (end.longitude - start.longitude) * progress,
-  };
-}
-
-function getRouteDistance(route: Coordinate[]) {
-  return route.reduce((total, point, index) => {
-    if (index === 0) {
-      return total;
-    }
-
-    return total + getDistance(route[index - 1], point);
-  }, 0);
-}
-
-function getDistance(start: Coordinate, end: Coordinate) {
-  const earthRadiusKm = 6371;
-  const latitudeDelta = toRadians(end.latitude - start.latitude);
-  const longitudeDelta = toRadians(end.longitude - start.longitude);
-  const startLatitude = toRadians(start.latitude);
-  const endLatitude = toRadians(end.latitude);
-  const haversine =
-    Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(longitudeDelta / 2) ** 2;
-
-  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-}
-
-function getBearing(start: Coordinate, end: Coordinate) {
-  const startLatitude = toRadians(start.latitude);
-  const endLatitude = toRadians(end.latitude);
-  const longitudeDelta = toRadians(end.longitude - start.longitude);
-  const y = Math.sin(longitudeDelta) * Math.cos(endLatitude);
-  const x =
-    Math.cos(startLatitude) * Math.sin(endLatitude) -
-    Math.sin(startLatitude) * Math.cos(endLatitude) * Math.cos(longitudeDelta);
-
-  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
-}
-
 function formatPingTime(date: Date) {
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('en-US', { month: 'short' });
@@ -1294,12 +1409,12 @@ function formatCoordinate(coordinate: Coordinate) {
   return `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
 }
 
-function toRadians(value: number) {
-  return (value * Math.PI) / 180;
-}
-
-function toDegrees(value: number) {
-  return (value * 180) / Math.PI;
+function formatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
 }
 
 const styles = StyleSheet.create({
@@ -1447,6 +1562,41 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0,
     textTransform: 'uppercase',
+  },
+  livePill: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    left: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    position: 'absolute',
+    shadowColor: '#1b1f24',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+  },
+  livePillActive: {
+    backgroundColor: 'rgba(5, 101, 42, 0.94)',
+    borderColor: 'rgba(43, 230, 158, 0.6)',
+  },
+  livePillIdle: {
+    backgroundColor: 'rgba(22, 32, 44, 0.88)',
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+  },
+  liveDot: {
+    borderRadius: 4,
+    height: 8,
+    width: 8,
+  },
+  livePillText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.4,
   },
   sideRail: {
     gap: 12,
@@ -1625,6 +1775,43 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.green,
     borderRadius: 4,
     height: '100%',
+  },
+  rateRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+  rateLabel: {
+    color: BRAND.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0,
+  },
+  rateChips: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  rateChip: {
+    alignItems: 'center',
+    backgroundColor: '#eef3f0',
+    borderRadius: 6,
+    justifyContent: 'center',
+    minWidth: 38,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  rateChipActive: {
+    backgroundColor: BRAND.green,
+  },
+  rateChipText: {
+    color: BRAND.ink,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0,
+  },
+  rateChipTextActive: {
+    color: '#fff',
   },
   optionPanel: {
     backgroundColor: '#f6fbf7',

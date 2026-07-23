@@ -1,9 +1,18 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  ReduceMotion,
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import Svg, { Circle, G } from 'react-native-svg';
 
+import { AnimatedCount } from '@/src/components/ui/Motion';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { typography, type ThemeColors } from '@/src/theme/tokens';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export type DoughnutSegment = {
   label: string;
@@ -17,11 +26,14 @@ type DoughnutProps = {
   strokeWidth?: number;
   centerLabel?: string;
   centerValue?: string | number;
+  /** Animate a clockwise draw-in when the data changes. Default true. */
+  animate?: boolean;
 };
 
 /**
  * Lightweight SVG doughnut chart (no heavy chart dependency). Renders one arc
- * per segment proportional to its share of the total.
+ * per segment proportional to its share of the total, then sweeps them in
+ * clockwise on the UI thread via a single shared `sweep` value.
  */
 export function Doughnut({
   segments,
@@ -29,6 +41,7 @@ export function Doughnut({
   strokeWidth = 26,
   centerLabel,
   centerValue,
+  animate = true,
 }: DoughnutProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -36,24 +49,27 @@ export function Doughnut({
   const circumference = 2 * Math.PI * radius;
   const total = segments.reduce((sum, s) => sum + s.value, 0);
 
-  let offset = 0;
-  const arcs =
-    total > 0
-      ? segments
-          .filter((s) => s.value > 0)
-          .map((segment) => {
-            const fraction = segment.value / total;
-            const dash = fraction * circumference;
-            const arc = {
-              key: segment.label,
-              color: segment.color,
-              dashArray: `${dash} ${circumference - dash}`,
-              dashOffset: -offset,
-            };
-            offset += dash;
-            return arc;
-          })
-      : [];
+  const arcs = useMemo(() => {
+    if (total <= 0) return [];
+    let offset = 0;
+    return segments
+      .filter((s) => s.value > 0)
+      .map((segment) => {
+        const dash = (segment.value / total) * circumference;
+        const arc = { key: segment.label, color: segment.color, start: offset, dash };
+        offset += dash;
+        return arc;
+      });
+  }, [segments, total, circumference]);
+
+  // 0 → circumference sweep drives every arc's reveal in lockstep.
+  const sweep = useSharedValue(animate ? 0 : circumference);
+  useEffect(() => {
+    sweep.value = animate ? 0 : circumference;
+    if (animate) {
+      sweep.value = withTiming(circumference, { duration: 950, reduceMotion: ReduceMotion.System });
+    }
+  }, [arcs, animate, circumference, sweep]);
 
   const center = size / 2;
 
@@ -70,26 +86,62 @@ export function Doughnut({
             fill="none"
           />
           {arcs.map((arc) => (
-            <Circle
+            <Arc
               key={arc.key}
               cx={center}
               cy={center}
               r={radius}
-              stroke={arc.color}
+              color={arc.color}
               strokeWidth={strokeWidth}
-              strokeDasharray={arc.dashArray}
-              strokeDashoffset={arc.dashOffset}
-              strokeLinecap="butt"
-              fill="none"
+              start={arc.start}
+              dash={arc.dash}
+              circumference={circumference}
+              sweep={sweep}
             />
           ))}
         </G>
       </Svg>
       <View style={styles.center} pointerEvents="none">
-        <Text style={styles.centerValue}>{centerValue ?? total}</Text>
+        {typeof centerValue === 'number' ? (
+          <AnimatedCount value={centerValue} style={styles.centerValue} />
+        ) : (
+          <Text style={styles.centerValue}>{centerValue ?? total}</Text>
+        )}
         {centerLabel ? <Text style={styles.centerLabel}>{centerLabel}</Text> : null}
       </View>
     </View>
+  );
+}
+
+type ArcProps = {
+  cx: number;
+  cy: number;
+  r: number;
+  color: string;
+  strokeWidth: number;
+  start: number;
+  dash: number;
+  circumference: number;
+  sweep: ReturnType<typeof useSharedValue<number>>;
+};
+
+/** One animated segment; reveals the portion of its arc the global sweep has reached. */
+function Arc({ cx, cy, r, color, strokeWidth, start, dash, circumference, sweep }: ArcProps) {
+  const animatedProps = useAnimatedProps(() => {
+    const visible = Math.max(0, Math.min(dash, sweep.value - start));
+    return { strokeDasharray: `${visible} ${circumference}`, strokeDashoffset: -start };
+  });
+  return (
+    <AnimatedCircle
+      cx={cx}
+      cy={cy}
+      r={r}
+      stroke={color}
+      strokeWidth={strokeWidth}
+      strokeLinecap="butt"
+      fill="none"
+      animatedProps={animatedProps}
+    />
   );
 }
 
@@ -104,6 +156,7 @@ const makeStyles = (c: ThemeColors) =>
       color: c.textPrimary,
       fontSize: typography.h1,
       fontWeight: '800',
+      textAlign: 'center',
     },
     centerLabel: {
       color: c.textSecondary,

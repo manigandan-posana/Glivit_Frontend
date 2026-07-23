@@ -2,9 +2,11 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DeviceCard } from '@/src/components/DeviceCard';
+import { enterUp } from '@/src/components/ui/Motion';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { StatusPill } from '@/src/components/ui/StatusPill';
 import { apiErrorMessage } from '@/src/services/apiError';
@@ -116,16 +118,18 @@ export default function VehiclesScreen() {
         onEndReachedThreshold={0.4}
         onRefresh={onRefresh}
         refreshing={isFetching && page === 0}
-        renderItem={({ item }) => (
-          <DeviceCard
-            device={item}
-            onPress={() =>
-              router.push({
-                pathname: '/device-profile' as never,
-                params: { id: String(item.id) },
-              })
-            }
-          />
+        renderItem={({ item, index }) => (
+          <Animated.View entering={enterUp(index)}>
+            <DeviceCard
+              device={item}
+              onPress={() =>
+                router.push({
+                  pathname: '/device-profile' as never,
+                  params: { id: String(item.id) },
+                })
+              }
+            />
+          </Animated.View>
         )}
         ListEmptyComponent={
           <EmptyView icon="car-off" title="No vehicles found" message="Try a different search or filter." />

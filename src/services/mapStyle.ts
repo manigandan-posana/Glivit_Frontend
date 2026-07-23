@@ -1,7 +1,11 @@
 import { env } from '@/src/config/env';
 
 export type MapStyleSpec = string | Record<string, unknown>;
-export type MapStyleVariant = 'street' | 'satellite' | 'dark';
+// NOTE: There is no satellite imagery here. The previous 'satellite' variant
+// resolved to a plain street style, which was misleading. It is renamed to
+// 'bright' (a lighter road style). Add a real, licensed satellite raster source
+// before reintroducing a 'satellite' option.
+export type MapStyleVariant = 'street' | 'bright' | 'dark';
 export type MapProvider = 'geoapify' | 'openfreemap';
 
 export type MapStyleIssue = {
@@ -24,13 +28,15 @@ export type MapStyleInfo = {
  */
 const OPENFREEMAP_STYLES: Record<MapStyleVariant, string> = {
   street: 'https://tiles.openfreemap.org/styles/liberty',
-  satellite: 'https://tiles.openfreemap.org/styles/bright',
+  bright: 'https://tiles.openfreemap.org/styles/bright',
   dark: 'https://tiles.openfreemap.org/styles/dark',
 };
 
+// Geoapify's free tier has no distinct "bright" road style, so bright falls back
+// to the same osm-bright base as street. Neither is satellite imagery.
 const GEOAPIFY_STYLES: Record<MapStyleVariant, string> = {
   street: 'osm-bright',
-  satellite: 'osm-bright',
+  bright: 'osm-bright',
   dark: 'dark-matter',
 };
 

@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { PressableScale } from '@/src/components/ui/Motion';
 import { StatusPill } from '@/src/components/ui/StatusPill';
 import type { DeviceSummary } from '@/src/types/api';
 import { useTheme } from '@/src/theme/ThemeProvider';
@@ -23,10 +24,12 @@ export function DeviceCard({ device, onPress }: { device: DeviceSummary; onPress
   const styles = useMemo(() => makeStyles(c), [c]);
   const online = device.gpsValid && device.state !== 'NO_DATA' && device.state !== 'INACTIVE';
   return (
-    <Pressable
+    <PressableScale
+      haptic
       accessibilityRole="button"
+      accessibilityLabel={device.name}
       onPress={onPress}
-      style={({ pressed }) => [styles.card, elevation(1), pressed && { opacity: 0.9 }]}>
+      style={[styles.card, elevation(1)]}>
       <View style={styles.iconWrap}>
         <MaterialCommunityIcons
           color={c.primary}
@@ -54,7 +57,7 @@ export function DeviceCard({ device, onPress }: { device: DeviceSummary; onPress
           <Meta icon="clock-outline" text={formatUpdate(device.lastUpdate)} />
         </View>
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 
