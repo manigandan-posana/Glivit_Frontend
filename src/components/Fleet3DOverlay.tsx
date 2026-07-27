@@ -40,7 +40,19 @@ type RenderedVehicle = {
   variant: CarVariant;
 };
 
-const CONTEXT_TIMEOUT_MS = 3500;
+/**
+ * How long to wait for the native GL surface to produce its first frame.
+ *
+ * A cold Android start has to bring up the map SDK and the GL surface at the
+ * same time, and on mid-range hardware that regularly takes longer than the
+ * 3.5s this used to allow — which permanently latched the overlay into the 2D
+ * image fallback ("2D fallback" in the model picker) even though the context
+ * was about to become usable. The budget is generous and, more importantly,
+ * a miss now retries instead of giving up.
+ */
+const CONTEXT_TIMEOUT_MS = 9_000;
+/** Fresh GL surfaces attempted before the overlay concedes to the 2D fallback. */
+const MAX_CONTEXT_ATTEMPTS = 3;
 
 function lerpAngle(current: number, target: number, amount: number) {
   let delta = (target - current) % (Math.PI * 2);
@@ -75,6 +87,13 @@ export function Fleet3DOverlay({
   const mountedRef = useRef(true);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  /**
+   * Bumped to mount a brand new GL surface. A surface that never reported a
+   * frame is torn down and retried rather than latching the whole overlay off,
+   * because the common failure is a slow/recycled Android surface rather than a
+   * device that genuinely cannot render.
+   */
+  const [attempt, setAttempt] = useState(0);
   markersRef.current = markers;
   onModelErrorRef.current = onModelError;
   onModelLoadedRef.current = onModelLoaded;
@@ -88,11 +107,26 @@ export function Fleet3DOverlay({
       if (!mountedRef.current) return;
       disposerRef.current?.();
       disposerRef.current = null;
+      if (attempt + 1 < MAX_CONTEXT_ATTEMPTS) {
+        console.warn(
+          `[Fleet3DOverlay] GL surface did not report a frame; retrying (${attempt + 2}/${MAX_CONTEXT_ATTEMPTS}).`
+        );
+        setAttempt((current) => current + 1);
+        return;
+      }
       setFailed(true);
       onUnavailableRef.current?.('The 3D graphics context did not become ready in time.');
     }, CONTEXT_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [failed, ready]);
+  }, [attempt, failed, ready]);
+
+  // A resize is a fresh surface, so give it the full retry budget again rather
+  // than inheriting a stale attempt count from the previous size.
+  useEffect(() => {
+    setReady(false);
+    setAttempt(0);
+    setFailed(false);
+  }, [height, width]);
 
   useEffect(
     () => () => {
@@ -102,6 +136,26 @@ export function Fleet3DOverlay({
     },
     []
   );
+
+  /**
+   * Single place that decides whether a GL failure is retried or conceded.
+   * Reads the attempt counter through the functional updater so it stays correct
+   * inside the long-lived render loop closure.
+   */
+  const failContext = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    setAttempt((current) => {
+      if (current + 1 < MAX_CONTEXT_ATTEMPTS) {
+        console.warn(
+          `[Fleet3DOverlay] ${message} Retrying (${current + 2}/${MAX_CONTEXT_ATTEMPTS}).`
+        );
+        return current + 1;
+      }
+      setFailed(true);
+      onUnavailableRef.current?.(message);
+      return current;
+    });
+  }, []);
 
   const onContextCreate = useCallback(
     (gl: ExpoWebGLRenderingContext) => {
@@ -254,13 +308,10 @@ export function Fleet3DOverlay({
             renderer?.renderLists.dispose();
             renderer?.dispose();
             renderer = null;
-            if (mountedRef.current) {
-              const message =
-                error instanceof Error ? error.message : 'The 3D renderer stopped unexpectedly.';
-              console.warn('[Fleet3DOverlay] Render failed; using marker images.', error);
-              setFailed(true);
-              onUnavailableRef.current?.(message);
-            }
+            const message =
+              error instanceof Error ? error.message : 'The 3D renderer stopped unexpectedly.';
+            console.warn('[Fleet3DOverlay] Render failed.', error);
+            failContext(message);
           }
         };
         frame = requestAnimationFrame(render);
@@ -274,21 +325,18 @@ export function Fleet3DOverlay({
           renderer = null;
         };
       } catch (error) {
-        console.warn('[Fleet3DOverlay] Shared 3D renderer unavailable; using marker images.', error);
+        console.warn('[Fleet3DOverlay] Shared 3D renderer could not start.', error);
         if (frame != null) cancelAnimationFrame(frame);
         Array.from(rendered.keys()).forEach(removeVehicle);
         failedModels.clear();
         renderer?.renderLists.dispose();
         renderer?.dispose();
-        if (mountedRef.current) {
-          setFailed(true);
-          onUnavailableRef.current?.(
-            error instanceof Error ? error.message : 'The 3D renderer could not start.'
-          );
-        }
+        failContext(
+          error instanceof Error ? error.message : 'The 3D renderer could not start.'
+        );
       }
     },
-    [height, width]
+    [failContext, height, width]
   );
 
   if (failed || width <= 0 || height <= 0) return null;
@@ -296,7 +344,7 @@ export function Fleet3DOverlay({
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <SafeGLView
-        key={`${Math.round(width)}x${Math.round(height)}`}
+        key={`${Math.round(width)}x${Math.round(height)}#${attempt}`}
         collapsable={false}
         msaaSamples={0}
         onContextCreate={onContextCreate}

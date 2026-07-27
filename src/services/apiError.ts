@@ -8,10 +8,21 @@ export function apiErrorMessage(err: unknown, fallback = 'Something went wrong')
   if (e.status === 'FETCH_ERROR' || e.status === 'TIMEOUT_ERROR') {
     return 'Cannot reach the server. Check the backend URL and your connection.';
   }
+  // A 5xx used to be reported as a bare "Server error", which discarded the
+  // envelope the backend actually sent — including the correlation id needed to
+  // find the failure in the server log. Prefer the real message when there is
+  // one, and fall back to the generic text only when there is not.
+  const serverMessage = e.data?.error?.message;
   if (typeof e.status === 'number' && e.status >= 500) {
-    return 'Server error. Please try again later.';
+    const correlationId = e.data?.correlationId;
+    if (serverMessage) {
+      return correlationId ? `${serverMessage} (ref ${correlationId})` : serverMessage;
+    }
+    return correlationId
+      ? `Server error. Please try again later. (ref ${correlationId})`
+      : 'Server error. Please try again later.';
   }
-  if (e.data?.error?.message) return e.data.error.message;
+  if (serverMessage) return serverMessage;
   return fallback;
 }
 

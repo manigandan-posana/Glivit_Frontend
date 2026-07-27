@@ -31,7 +31,9 @@ export default function DeviceProfileScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top }]}>
+    <ScrollView
+      contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
+      style={styles.screen}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.back}>
           <MaterialCommunityIcons color="#FFFFFF" name="arrow-left" size={24} />
@@ -110,7 +112,15 @@ function formatTime(iso?: string | null) {
 
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
+    // The background belongs on the ScrollView too, so short profiles do not
+    // leave a white strip under the last card in dark mode.
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    content: {
+      backgroundColor: c.pageBackground,
+      flexGrow: 1,
+      gap: spacing.md,
+      padding: spacing.md,
+    },
     header: {
       alignItems: 'center',
       backgroundColor: '#111A26',

@@ -122,7 +122,7 @@ export default function TripPlaybackScreen() {
   const fromIso = useMemo(() => `${selectedDate}T00:00:00.000Z`, [selectedDate]);
   const toIso = useMemo(() => `${selectedDate}T23:59:59.999Z`, [selectedDate]);
 
-  const { data, isLoading, isError, error, refetch } = useGetDevicePlaybackQuery(
+  const { data, isFetching, isError, error, refetch } = useGetDevicePlaybackQuery(
     { deviceId, from: fromIso, to: toIso },
     { skip: !Number.isFinite(deviceId) }
   );
@@ -183,6 +183,23 @@ export default function TripPlaybackScreen() {
 
   const track = useMemo(() => buildPlaybackTrack(data?.points ?? []), [data?.points]);
   const points = track.points;
+  /** A day only has playable history when there are at least two real fixes. */
+  const hasTrack = points.length >= 2;
+  const showLoading = isFetching && !data;
+
+  /**
+   * Rewind whenever the loaded day changes.
+   *
+   * The clock, covered distance, progress bar and the vehicle's position are all
+   * derived from `progressRef`, so resetting it here is what moves the vehicle
+   * back to the start of the newly selected day's route instead of leaving it
+   * parked at the previous day's finishing position.
+   */
+  useEffect(() => {
+    progressRef.current = 0;
+    setUi(0);
+    setPlaying(hasTrack);
+  }, [data, hasTrack, selectedDate]);
 
   // Real trip duration (for the clock readout) and event tick fractions.
   const timing = useMemo(() => {
@@ -283,36 +300,62 @@ export default function TripPlaybackScreen() {
   if (!Number.isFinite(deviceId)) {
     return <Center text="No vehicle selected." />;
   }
-  if (isLoading) {
-    return <Center spinner text="Preparing cinematic playback…" />;
-  }
-  if (isError || !data) {
-    return <Center text={apiErrorMessage(error)} onRetry={refetch} />;
-  }
-  if (points.length < 2) {
-    return <Center text="Not enough trip history to play back yet." onRetry={refetch} />;
-  }
 
-  const currentSample = sampleAt(track, ui * track.totalDurationMs);
+  const currentSample = hasTrack ? sampleAt(track, ui * track.totalDurationMs) : null;
   const curSpeed = Math.round(currentSample?.speed ?? 0);
-  const elapsedMin = timing.durationMin * ui;
+  const elapsedMin = hasTrack ? timing.durationMin * ui : 0;
   const coveredDistanceKm = currentSample?.distanceKm ?? 0;
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.root}>
-      <CinematicTripMap
-        accent={colors.primary}
-        cameraCommandId={cameraCommandId}
-        cameraMode={camera}
-        carVariant={carVariant}
-        events={data.events}
-        onReady={handleMapReady}
-        onModelLoadState={handleModelLoadState}
-        playing={appActive && playing}
-        stops={data.stops}
-        track={track}
-        ui={ui}
-      />
+      {/* The map is only mounted once there is a real route for the selected
+          day. Every other state (loading, error, no history) is shown as an
+          overlay so the date selector below stays on screen and usable —
+          previously an empty day replaced the whole screen and stranded the
+          user with no way back to a day that does have history. */}
+      {hasTrack && data ? (
+        <CinematicTripMap
+          accent={colors.primary}
+          cameraCommandId={cameraCommandId}
+          cameraMode={camera}
+          carVariant={carVariant}
+          events={data.events}
+          onReady={handleMapReady}
+          onModelLoadState={handleModelLoadState}
+          playing={appActive && playing}
+          stops={data.stops}
+          track={track}
+          ui={ui}
+        />
+      ) : (
+        <View style={styles.mapPlaceholder}>
+          {showLoading ? (
+            <>
+              <ActivityIndicator color={colors.primary} size="large" />
+              <Text style={styles.placeholderText}>Loading route history…</Text>
+            </>
+          ) : isError ? (
+            <>
+              <MaterialCommunityIcons color={G.sub} name="cloud-alert" size={44} />
+              <Text style={styles.placeholderTitle}>Route history unavailable</Text>
+              <Text style={styles.placeholderText}>{apiErrorMessage(error)}</Text>
+              <Pressable accessibilityRole="button" onPress={refetch} style={styles.retry}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <MaterialCommunityIcons color={G.sub} name="map-marker-off-outline" size={44} />
+              <Text style={styles.placeholderTitle}>No history available</Text>
+              <Text style={styles.placeholderText}>
+                {labelDate(selectedDate)} has no recorded trip for this vehicle. Use the arrows
+                above to pick another day.
+              </Text>
+            </>
+          )}
+        </View>
+      )}
+
 
       {/* Top bar */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
@@ -321,22 +364,41 @@ export default function TripPlaybackScreen() {
         </Pressable>
         <View style={styles.titleWrap}>
           <Text numberOfLines={1} style={styles.title}>{params.name ?? `Vehicle #${deviceId}`}</Text>
-          <Text style={styles.subtitle}>
-            {data.distanceKm.toFixed(1)} km · {Math.round(timing.durationMin)} min · {data.returnedPoints} pts
+          <Text numberOfLines={1} style={styles.subtitle}>
+            {hasTrack && data
+              ? `${data.distanceKm.toFixed(1)} km · ${Math.round(timing.durationMin)} min · ${data.returnedPoints} pts`
+              : isFetching
+                ? 'Loading route history…'
+                : isError
+                  ? 'History unavailable'
+                  : 'No history available'}
           </Text>
         </View>
-        {/* Date picker — prev/label/next inline in top bar */}
+        {/* Route-history date selector. Always mounted — including while the
+            selected day is loading, errored or empty — so the arrows can always
+            move to another day. */}
         <View style={styles.datePicker}>
           <Pressable
             accessibilityLabel="Previous day"
+            accessibilityRole="button"
             hitSlop={8}
             onPress={() => changeDate(-1)}
             style={styles.dateArrow}>
             <MaterialCommunityIcons color={G.text} name="chevron-left" size={18} />
           </Pressable>
-          <Text style={styles.dateLabel}>{labelDate(selectedDate)}</Text>
+          {isFetching ? (
+            <View style={styles.dateLabelSlot}>
+              <ActivityIndicator color={colors.primary} size="small" />
+            </View>
+          ) : (
+            <Text numberOfLines={1} style={styles.dateLabel}>
+              {labelDate(selectedDate)}
+            </Text>
+          )}
           <Pressable
             accessibilityLabel="Next day"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !isPast }}
             disabled={!isPast}
             hitSlop={8}
             onPress={() => changeDate(1)}
@@ -346,6 +408,8 @@ export default function TripPlaybackScreen() {
         </View>
       </View>
 
+      {/* Scene, model and camera controls only make sense over a real route. */}
+      {hasTrack ? (
       <View
         pointerEvents="none"
         style={[styles.sceneBadge, { top: insets.top + 68 }]}>
@@ -366,7 +430,9 @@ export default function TripPlaybackScreen() {
             size={16}
           />
       </View>
+      ) : null}
 
+      {hasTrack ? (
       <View style={[styles.carPicker, { top: insets.top + 116 }]}>
         <VehicleModelPicker
           compact
@@ -376,8 +442,10 @@ export default function TripPlaybackScreen() {
           onChange={selectVehicleModel}
         />
       </View>
+      ) : null}
 
       {/* Camera mode rail drives the existing map without remounting it. */}
+      {hasTrack ? (
       <View style={[styles.camRail, { top: insets.top + 64 }]}>
         {CAMERAS.map((cam) => {
           const active = cam.id === camera;
@@ -398,6 +466,7 @@ export default function TripPlaybackScreen() {
           );
         })}
       </View>
+      ) : null}
 
       {/* Bottom control deck */}
       <View style={[styles.deck, { paddingBottom: 14 }]}>
@@ -413,9 +482,12 @@ export default function TripPlaybackScreen() {
           </View>
         </View>
 
-        {/* Timeline */}
-        <View style={styles.timelineWrap}>
-          <View style={styles.track} onLayout={onTrackLayout} {...pan.panHandlers}>
+        {/* Timeline. Scrubbing is only wired up when the day has a route. */}
+        <View style={[styles.timelineWrap, !hasTrack && styles.deckDisabled]}>
+          <View
+            style={styles.track}
+            onLayout={onTrackLayout}
+            {...(hasTrack ? pan.panHandlers : {})}>
             <View style={[styles.trackFill, { width: `${ui * 100}%`, backgroundColor: colors.primary }]} />
             {eventTicks.map((t, i) => (
               <View key={i} style={[styles.tick, { left: `${t.frac * 100}%`, backgroundColor: G.text }]} />
@@ -424,11 +496,21 @@ export default function TripPlaybackScreen() {
           </View>
         </View>
 
-        <View style={styles.controls}>
-          <Pressable accessibilityLabel="Restart" onPress={restart} style={styles.ctrlSmall}>
+        <View style={[styles.controls, !hasTrack && styles.deckDisabled]}>
+          <Pressable
+            accessibilityLabel="Restart"
+            accessibilityRole="button"
+            disabled={!hasTrack}
+            onPress={restart}
+            style={styles.ctrlSmall}>
             <MaterialCommunityIcons color={G.text} name="restart" size={22} />
           </Pressable>
-          <Pressable accessibilityLabel={playing ? 'Pause' : 'Play'} onPress={togglePlay} style={[styles.playBtn, { backgroundColor: colors.primary }]}>
+          <Pressable
+            accessibilityLabel={playing ? 'Pause' : 'Play'}
+            accessibilityRole="button"
+            disabled={!hasTrack}
+            onPress={togglePlay}
+            style={[styles.playBtn, { backgroundColor: colors.primary }]}>
             <MaterialCommunityIcons color={colors.onPrimary} name={playing ? 'pause' : 'play'} size={30} />
           </Pressable>
           <View style={styles.speeds}>
@@ -1031,6 +1113,21 @@ const styles = StyleSheet.create({
   },
   dateArrow: { alignItems: 'center', height: 28, justifyContent: 'center', width: 22 },
   dateLabel: { color: G.text, fontSize: 12, fontWeight: '800', minWidth: 58, textAlign: 'center' },
+  dateLabelSlot: { alignItems: 'center', justifyContent: 'center', minWidth: 58 },
+
+  mapPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: '#05070c',
+    gap: 10,
+    justifyContent: 'center',
+    paddingBottom: 200,
+    paddingHorizontal: 34,
+    paddingTop: 120,
+  },
+  placeholderTitle: { color: G.text, fontSize: 17, fontWeight: '900', textAlign: 'center' },
+  placeholderText: { color: G.sub, fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  deckDisabled: { opacity: 0.35 },
 
   sceneBadge: {
     alignItems: 'center',

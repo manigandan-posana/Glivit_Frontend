@@ -42,7 +42,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <ScrollView contentContainerStyle={styles.content} style={styles.screen}>
       <Card style={styles.card}>
         <Text style={styles.title}>Appearance</Text>
         <View style={styles.segment}>
@@ -179,7 +179,16 @@ function SwitchRow({
 
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
+    // The ScrollView itself must carry the page background: the content
+    // container is only as tall as its children, so anything below the last card
+    // otherwise falls through to the default white backdrop in dark mode.
+    screen: { backgroundColor: c.pageBackground, flex: 1 },
+    content: {
+      backgroundColor: c.pageBackground,
+      flexGrow: 1,
+      gap: spacing.md,
+      padding: spacing.md,
+    },
     card: { gap: spacing.md },
     title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
     segment: { gap: spacing.sm },

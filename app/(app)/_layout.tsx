@@ -49,7 +49,6 @@ export default function AppLayout() {
       <Drawer.Screen name="map" options={{ headerShown: false }} />
       <Drawer.Screen name="ai-chat" options={{ title: 'AI Assistant' }} />
       <Drawer.Screen name="vehicles" options={{ title: 'All Vehicles' }} />
-      <Drawer.Screen name="drivers" options={{ title: 'Drivers' }} />
       <Drawer.Screen name="geofences" options={{ title: 'Geofences' }} />
       <Drawer.Screen name="reports" options={{ title: 'Reports' }} />
       <Drawer.Screen name="commands" options={{ title: 'Device Commands' }} />

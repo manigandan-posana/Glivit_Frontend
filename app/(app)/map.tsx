@@ -614,7 +614,23 @@ function NativeFleetMap({
   selectedId: number | null;
 }) {
   const { stateColors } = useTheme();
-  const { width, height } = useWindowDimensions();
+  const screen = useWindowDimensions();
+  // The 3D overlay's orthographic camera has to use the MAP's box, not the
+  // window's: the map sits inside a bottom-safe-area inset, so window height is
+  // taller than the surface `pointForCoordinate` projects into. Feeding the
+  // window size in offset every vehicle vertically by the inset.
+  const [mapSize, setMapSize] = useState({ height: screen.height, width: screen.width });
+  const { height, width } = mapSize;
+  const handleMapLayout = useCallback((event: LayoutChangeEvent) => {
+    const next = {
+      height: Math.round(event.nativeEvent.layout.height),
+      width: Math.round(event.nativeEvent.layout.width),
+    };
+    if (next.height <= 0 || next.width <= 0) return;
+    setMapSize((current) =>
+      current.height === next.height && current.width === next.width ? current : next
+    );
+  }, []);
   const mountedRef = useRef(true);
   const projectionRequestRef = useRef(0);
   const lastProjectionAtRef = useRef(0);
@@ -701,6 +717,12 @@ function NativeFleetMap({
     setMapReady(true);
     onFitAll();
   }, [onFitAll]);
+
+  const handleThreeReady = useCallback(() => setThreeReady(true), []);
+  const handleThreeUnavailable = useCallback((message: string) => {
+    console.warn('[FleetMap] 3D vehicles unavailable; using marker images.', message);
+    setThreeReady(false);
+  }, []);
 
   const handleRegionChange = useCallback(
     (region?: { latitudeDelta?: number }) => {
@@ -838,7 +860,7 @@ function NativeFleetMap({
   }, [placed, selectedId, zoomedIn]);
 
   return (
-    <View style={StyleSheet.absoluteFill}>
+    <View onLayout={handleMapLayout} style={StyleSheet.absoluteFill}>
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
@@ -867,12 +889,16 @@ function NativeFleetMap({
         }}
       />
 
+      {/* Real 3D vehicle models for every placed marker. The transparent GL
+          surface sits over the map and is driven by the same projected screen
+          points as the tap targets below, so the models track the map exactly.
+          The 2D marker images only appear while this is starting up or if the
+          device genuinely cannot provide a GL context. */}
       <Fleet3DOverlay
-        key={`fleet-3d-${Math.round(width)}x${Math.round(height)}`}
         height={height}
         markers={threeMarkers}
-        onReady={() => setThreeReady(true)}
-        onUnavailable={() => setThreeReady(false)}
+        onReady={handleThreeReady}
+        onUnavailable={handleThreeUnavailable}
         width={width}
       />
 

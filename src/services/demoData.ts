@@ -367,6 +367,16 @@ function audit(action: string, entityType: string, entityId: string, detail?: st
   });
 }
 
+/**
+ * Next id for an in-memory demo collection.
+ *
+ * `length + 1` collided as soon as anything was removed, which produced
+ * duplicate React keys in the management lists.
+ */
+function nextId(items: { id: number }[]): number {
+  return items.reduce((max, item) => Math.max(max, item.id), 0) + 1;
+}
+
 function notFound(message: string): { error: FetchBaseQueryError } {
   return {
     error: {
@@ -719,7 +729,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   }
   if (url === '/devices') {
     if (method === 'POST' && body) {
-      const id = DEMO_DEVICES.length + 1;
+      const id = nextId(DEMO_DEVICES);
       const created = makeDevice(
         id,
         String(body.name ?? `Demo Vehicle ${id}`),
@@ -767,7 +777,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   if (url === '/projects') {
     if (method === 'POST' && body) {
       const created: ProjectDto = {
-        id: DEMO_PROJECTS.length + 1,
+        id: nextId(DEMO_PROJECTS),
         name: String(body.name ?? 'New Project'),
         description: (body.description as string) ?? null,
         status: String(body.status ?? 'ACTIVE'),
@@ -778,29 +788,15 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
     }
     return envelope(DEMO_PROJECTS);
   }
+  // Read-only: driver records are provisioned from POST /users with the DRIVER
+  // role. The standalone drivers module (and its write API) has been removed.
   if (url === '/drivers') {
-    if (method === 'POST' && body) {
-      const created: DriverDto = {
-        id: DEMO_DRIVERS.length + 1,
-        projectId: (body.projectId as number) ?? null,
-        name: String(body.name ?? 'New Driver'),
-        identifier: (body.identifier as string) ?? null,
-        phone: (body.phone as string) ?? null,
-        licenceNumber: (body.licenceNumber as string) ?? null,
-        licenceExpiry: (body.licenceExpiry as string) ?? null,
-        emergencyContact: (body.emergencyContact as string) ?? null,
-        active: body.active == null ? true : Boolean(body.active),
-      };
-      DEMO_DRIVERS.unshift(created);
-      audit('CREATE_DRIVER', 'DRIVER', String(created.id));
-      return envelope(created);
-    }
     return envelope(DEMO_DRIVERS);
   }
   if (url === '/groups') {
     if (method === 'POST' && body) {
       const created: GroupDto = {
-        id: DEMO_GROUPS.length + 1,
+        id: nextId(DEMO_GROUPS),
         name: String(body.name ?? 'New Group'),
         parentId: (body.parentId as number) ?? null,
         managerId: (body.managerId as number) ?? null,
@@ -814,7 +810,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   if (url === '/users') {
     if (method === 'POST' && body) {
       const created: ManagedUserDto = {
-        id: DEMO_USERS.length + 1,
+        id: nextId(DEMO_USERS),
         username: String(body.username ?? `user${DEMO_USERS.length + 1}`),
         name: String(body.name ?? 'New User'),
         email: (body.email as string) ?? null,
@@ -825,6 +821,23 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
       };
       DEMO_USERS.unshift(created);
       audit('CREATE_USER', 'USER', String(created.id));
+      // Mirrors the backend: a user created with the DRIVER role also gets the
+      // driver record that vehicle assignment and driver scoring read from.
+      if (created.role === 'DRIVER') {
+        const driver: DriverDto = {
+          id: nextId(DEMO_DRIVERS),
+          projectId: null,
+          name: created.name,
+          identifier: created.username,
+          phone: created.mobile ?? null,
+          licenceNumber: null,
+          licenceExpiry: null,
+          emergencyContact: null,
+          active: created.status === 'ACTIVE',
+        };
+        DEMO_DRIVERS.unshift(driver);
+        audit('CREATE_DRIVER', 'DRIVER', String(driver.id), 'Provisioned from user account');
+      }
       return envelope(created);
     }
     return envelope(pageOf(DEMO_USERS, Number(params.page ?? 0), Number(params.size ?? 20)));
@@ -844,7 +857,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   if (url === '/geofences') {
     if (method === 'POST' && body) {
       const created: GeofenceDto = {
-        id: DEMO_GEOFENCES.length + 1,
+        id: nextId(DEMO_GEOFENCES),
         name: String(body.name ?? 'New Geofence'),
         description: (body.description as string) ?? null,
         color: String(body.color ?? '#27D34D'),
@@ -865,12 +878,42 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
     }
     return envelope(pageOf(DEMO_GEOFENCES, Number(params.page ?? 0), Number(params.size ?? 20)));
   }
+  const geofenceMatch = url.match(/^\/geofences\/(\d+)$/);
+  if (geofenceMatch) {
+    const id = Number(geofenceMatch[1]);
+    const index = DEMO_GEOFENCES.findIndex((geofence) => geofence.id === id);
+    if (index < 0) return notFound('Geofence not found');
+    if (method === 'DELETE') {
+      DEMO_GEOFENCES.splice(index, 1);
+      audit('DELETE_GEOFENCE', 'GEOFENCE', String(id));
+      return envelope(null);
+    }
+    if (method === 'PUT' && body) {
+      const updated: GeofenceDto = {
+        ...DEMO_GEOFENCES[index],
+        name: String(body.name ?? DEMO_GEOFENCES[index].name),
+        description: (body.description as string) ?? null,
+        color: String(body.color ?? DEMO_GEOFENCES[index].color),
+        type: String(body.type ?? DEMO_GEOFENCES[index].type),
+        coordinates: (body.coordinates as number[][]) ?? DEMO_GEOFENCES[index].coordinates,
+        radiusMeters: (body.radiusMeters as number) ?? DEMO_GEOFENCES[index].radiusMeters,
+        enterAlert: body.enterAlert == null ? true : Boolean(body.enterAlert),
+        exitAlert: body.exitAlert == null ? true : Boolean(body.exitAlert),
+        active: body.active == null ? true : Boolean(body.active),
+        updatedAt: new Date().toISOString(),
+      };
+      DEMO_GEOFENCES[index] = updated;
+      audit('UPDATE_GEOFENCE', 'GEOFENCE', String(id));
+      return envelope(updated);
+    }
+    return envelope(DEMO_GEOFENCES[index]);
+  }
   if (url === '/commands') {
     if (method === 'POST' && body) {
       const existing = DEMO_COMMANDS.find((c) => c.idempotencyKey === body.idempotencyKey);
       if (existing) return envelope(existing);
       const created: CommandDto = {
-        id: DEMO_COMMANDS.length + 1,
+        id: nextId(DEMO_COMMANDS),
         deviceId: Number(body.deviceId),
         commandType: String(body.commandType ?? 'REQUEST_LOCATION').toUpperCase(),
         payload: (body.payload as string) ?? null,
@@ -888,7 +931,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   }
   if (url === '/reports') {
     if (method === 'POST' && body) {
-      const id = DEMO_REPORTS.length + 1;
+      const id = nextId(DEMO_REPORTS);
       const created: ReportDto = {
         id,
         reportType: String(body.reportType ?? 'SUMMARY').toUpperCase(),
@@ -1110,15 +1153,24 @@ export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
 ) => {
   try {
     return await demoBaseQueryImpl(args, api, extraOptions);
-  } catch {
+  } catch (error) {
     const url = typeof args === 'string' ? args : args.url;
+    const method = typeof args === 'string' ? 'GET' : (args.method ?? 'GET').toUpperCase();
+    const reason = error instanceof Error ? error.message : String(error);
+    // Surface the underlying reason instead of a generic failure: an opaque
+    // "Server error" here made demo-mode write failures impossible to diagnose
+    // from the screen that reported them.
+    console.warn(`[demo] ${method} ${url} failed`, error);
     return {
       error: {
         status: 500,
         data: {
           success: false,
           data: null,
-          error: { code: 'DEMO_ERROR', message: `Demo handler failed for ${url}` },
+          error: {
+            code: 'DEMO_ERROR',
+            message: `Demo handler failed for ${method} ${url}: ${reason}`,
+          },
         },
       } as FetchBaseQueryError,
     };

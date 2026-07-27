@@ -3,7 +3,6 @@ import type {
   ApiResponse,
   AuditDto,
   CommandDto,
-  DriverDto,
   EventDto,
   GeofenceDto,
   GroupDto,
@@ -17,16 +16,6 @@ import type {
 } from '@/src/types/api';
 
 export type ProjectRequest = { name: string; description?: string; status?: string };
-export type DriverRequest = {
-  name: string;
-  identifier?: string;
-  phone?: string;
-  licenceNumber?: string;
-  licenceExpiry?: string;
-  projectId?: number;
-  emergencyContact?: string;
-  active?: boolean;
-};
 export type GroupRequest = { name: string; parentId?: number; managerId?: number };
 export type UserRequest = {
   username: string;
@@ -92,16 +81,6 @@ export const operationsApi = baseApi.injectEndpoints({
       transformResponse: (response: ApiResponse<ProjectDto>) => unwrap(response),
       invalidatesTags: ['Project'],
     }),
-    getDrivers: build.query<DriverDto[], void>({
-      query: () => ({ url: '/drivers' }),
-      transformResponse: (response: ApiResponse<DriverDto[]>) => unwrap(response),
-      providesTags: ['Driver'],
-    }),
-    createDriver: build.mutation<DriverDto, DriverRequest>({
-      query: (body) => ({ url: '/drivers', method: 'POST', body }),
-      transformResponse: (response: ApiResponse<DriverDto>) => unwrap(response),
-      invalidatesTags: ['Driver'],
-    }),
     getGroups: build.query<GroupDto[], void>({
       query: () => ({ url: '/groups' }),
       transformResponse: (response: ApiResponse<GroupDto[]>) => unwrap(response),
@@ -123,7 +102,9 @@ export const operationsApi = baseApi.injectEndpoints({
     createUser: build.mutation<ManagedUserDto, UserRequest>({
       query: (body) => ({ url: '/users', method: 'POST', body }),
       transformResponse: (response: ApiResponse<ManagedUserDto>) => unwrap(response),
-      invalidatesTags: ['User'],
+      // Creating a user with the DRIVER role provisions that user's driver
+      // record server-side, so the driver-backed caches refresh too.
+      invalidatesTags: ['User', 'Driver', 'Audit'],
     }),
     getEvents: build.query<PageResponse<EventDto>, { page?: number; size?: number; deviceId?: number }>({
       query: ({ page = 0, size = 20, deviceId }) => ({
@@ -146,7 +127,16 @@ export const operationsApi = baseApi.injectEndpoints({
     createGeofence: build.mutation<GeofenceDto, GeofenceRequest>({
       query: (body) => ({ url: '/geofences', method: 'POST', body }),
       transformResponse: (response: ApiResponse<GeofenceDto>) => unwrap(response),
-      invalidatesTags: ['Geofence'],
+      invalidatesTags: ['Geofence', 'Audit'],
+    }),
+    updateGeofence: build.mutation<GeofenceDto, { id: number; body: GeofenceRequest }>({
+      query: ({ id, body }) => ({ url: `/geofences/${id}`, method: 'PUT', body }),
+      transformResponse: (response: ApiResponse<GeofenceDto>) => unwrap(response),
+      invalidatesTags: ['Geofence', 'Audit'],
+    }),
+    deleteGeofence: build.mutation<void, number>({
+      query: (id) => ({ url: `/geofences/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Geofence', 'Audit'],
     }),
     getCommands: build.query<PageResponse<CommandDto>, { page?: number; size?: number }>({
       query: ({ page = 0, size = 20 }) => ({ url: '/commands', params: { page, size } }),
@@ -203,15 +193,15 @@ export const operationsApi = baseApi.injectEndpoints({
 
 export const {
   useAcknowledgeEventMutation,
-  useCreateDriverMutation,
   useCreateGeofenceMutation,
   useCreateGroupMutation,
   useCreateProjectMutation,
   useCreateReportMutation,
   useCreateUserMutation,
+  useDeleteGeofenceMutation,
+  useUpdateGeofenceMutation,
   useGetAuditQuery,
   useGetCommandsQuery,
-  useGetDriversQuery,
   useGetEventsQuery,
   useGetGeofencesQuery,
   useGetGroupsQuery,

@@ -24,7 +24,6 @@ type DrawerLink = {
   route:
     | '/vehicles'
     | '/map'
-    | '/drivers'
     | '/geofences'
     | '/reports'
     | '/commands'
@@ -37,10 +36,12 @@ type DrawerLink = {
 // The All Vehicles Map is the app home. Live fleet tracking, events, maintenance
 // alerts and the AI Command Centre are surfaced there (map + notification bell),
 // so they no longer need their own drawer destinations.
+//
+// Drivers are not a destination of their own: a driver is a user with the DRIVER
+// role, so the whole lifecycle lives under Management > Users.
 const LINKS: DrawerLink[] = [
   { label: 'Live Map (Home)', icon: 'map-marker-radius-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
   { label: 'All Vehicles', icon: 'car-multiple', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
-  { label: 'Drivers', icon: 'card-account-details-outline', route: '/drivers', permission: P.VIEW_LIVE_LOCATION },
   { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
   { label: 'All Vehicles Report', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
   { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },

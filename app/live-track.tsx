@@ -9,6 +9,7 @@ import {
   Image,
   type LayoutChangeEvent,
   Linking,
+  Modal,
   PanResponder,
   type PanResponderInstance,
   PermissionsAndroid,
@@ -43,7 +44,7 @@ import {
 } from '@/src/components/Vehicle3DMarker';
 import { VehicleModelPicker } from '@/src/components/VehicleModelPicker';
 import { env } from '@/src/config/env';
-import { useGetDeviceQuery } from '@/src/services/devicesApi';
+import { useGetAllDevicesQuery, useGetDeviceQuery } from '@/src/services/devicesApi';
 import { getMapStyleInfo, getNativeMapProviderLabel } from '@/src/services/mapStyle';
 import {
   buildPlaybackTrack,
@@ -61,9 +62,15 @@ import {
   vehicleMarkerRotation,
   vehicleMarkerSource,
 } from '@/src/services/vehicleMarkerAssets';
-import type { PlaybackTrackPoint } from '@/src/types/api';
+import type { DeviceSummary, PlaybackTrackPoint } from '@/src/types/api';
 
 const LIVE_MARKER_SIZE = 64;
+/** Single spacing unit for every floating map layer (header, rails, pills). */
+const OVERLAY_GAP = 10;
+/** Height assumed for the collapsed sheet before it has been measured. */
+const COLLAPSED_SHEET_FALLBACK = 118;
+/** Size of every floating action button, so the rails line up pixel-for-pixel. */
+const CONTROL_BUTTON_SIZE = 44;
 const CAMERA_MIN_GAP_MS = 560;
 const LIVE_STALE_AFTER_SEC = 15;
 // Bounds for the smooth live catch-up between the previous displayed position and
@@ -328,6 +335,12 @@ export default function VehicleTrackerScreen() {
   // on the separate Route Playback / History screen.
   const liveEnabled = validDeviceId;
   const live = useLivePositions(liveEnabled ? deviceId : undefined);
+  // Fleet roster for the in-screen vehicle switcher. Selecting a different
+  // vehicle re-points every data source on this screen (device detail, live SSE
+  // stream, route buffer, camera) rather than only swapping the 3D model.
+  const { data: fleetDevices } = useGetAllDevicesQuery();
+  const fleet = useMemo(() => fleetDevices ?? [], [fleetDevices]);
+  const [vehiclePickerOpen, setVehiclePickerOpen] = useState(false);
   // The device summary carries the latest known position. Use it to seed the
   // vehicle at its current location immediately (before the first streamed fix)
   // and to start the route from that single trip-start coordinate.
@@ -443,11 +456,10 @@ export default function VehicleTrackerScreen() {
   const [controlsExpanded, setControlsExpanded] = useState(true);
   const [mapSize, setMapSize] = useState({ height, width });
   const [overlayHeights, setOverlayHeights] = useState({
-    camera: 54,
+    camera: 46,
     cinema: 150,
     header: 70,
-    live: 34,
-    resume: 34,
+    resume: 38,
   });
   const markerCategory = markerCategoryOverride ?? vehicleCategory;
 
@@ -555,6 +567,35 @@ export default function VehicleTrackerScreen() {
     return formatPingTime(Number.isNaN(parsed.getTime()) ? new Date() : parsed);
   }, [track]);
 
+  /**
+   * Hard reset when the tracked vehicle changes.
+   *
+   * The route buffer, playback clock, cached address and camera history all
+   * belong to the previous vehicle; carrying them over drew the old trip behind
+   * the new marker and left the camera parked on the old position. Clearing them
+   * (and re-arming the initial fit) makes the map re-centre on the newly
+   * selected vehicle's live location and every readout refresh for it.
+   */
+  useEffect(() => {
+    setElapsedMs(0);
+    elapsedMsRef.current = 0;
+    setIsLiveFollowing(true);
+    setIsFollowing(true);
+    setAutoFollowSuspended(false);
+    setVehicleScreenPoint(null);
+    setLiveAgeSec(null);
+    lastAddressRef.current = null;
+    manualInteractionRef.current = false;
+    initialRouteFitRef.current = false;
+    trackStartRef.current = null;
+    lastCameraAtRef.current = 0;
+    lastCameraCoordinateRef.current = null;
+    lastCameraModeRef.current = null;
+    lastCameraProfileRef.current = '';
+    lastValidHeadingRef.current = null;
+    staleSeenRef.current = false;
+  }, [deviceId]);
+
   // Re-centre the camera on the live vehicle and snap the marker to the newest
   // fix. (No timeline seeking — this is a live screen.)
   const jumpToLive = useCallback(() => {
@@ -575,28 +616,32 @@ export default function VehicleTrackerScreen() {
     if (useNativeMap) return getNativeMapProviderLabel(Platform.OS);
     return mapStyleInfo.webProvider === 'geoapify' ? 'Geoapify web fallback' : 'OpenFreeMap web fallback';
   }, [mapStyleInfo.webProvider, useNativeMap]);
-  const headerTop = insets.top + 12;
-  const cameraBarTop = headerTop + overlayHeights.header + 8;
-  const livePillTop = cameraBarTop + overlayHeights.camera + 8;
-  const resumeButtonTop =
-    (liveEnabled ? livePillTop + overlayHeights.live : cameraBarTop + overlayHeights.camera) + 8;
-  const cinemaDeckTop = headerTop + overlayHeights.header + 8;
+  // One gap constant for every floating layer, so the header, camera rail,
+  // control rail and sheet read as an evenly spaced stack on any screen size
+  // instead of drifting apart with ad-hoc paddings.
+  const headerTop = insets.top + OVERLAY_GAP;
+  const cameraBarTop = headerTop + overlayHeights.header + OVERLAY_GAP;
+  const cinemaDeckTop = headerTop + overlayHeights.header + OVERLAY_GAP;
+  // The LIVE badge now lives inside the header card and the resume pill is
+  // anchored above the sheet, so the top stack is just header + camera rail.
   const topOverlayBottom = cinematicMode
     ? cinemaDeckTop + overlayHeights.cinema
-    : autoFollowSuspended
-      ? resumeButtonTop + overlayHeights.resume
-      : liveEnabled
-        ? livePillTop + overlayHeights.live
-        : cameraBarTop + overlayHeights.camera;
+    : cameraBarTop + overlayHeights.camera;
   const visibleSheetHeight = isFullScreen
     ? 0
     : sheetExpanded
       ? sheetHeight || Math.min(420, Math.max(280, mapSize.height * 0.48))
-      : collapsedSheetHeight || 132;
+      : collapsedSheetHeight || COLLAPSED_SHEET_FALLBACK;
+  // Resume tracking floats just above the details sheet rather than over the
+  // map, so it never covers the vehicle or the road ahead of it.
+  const resumeButtonBottom = Math.ceil(visibleSheetHeight + insets.bottom) + OVERLAY_GAP;
   // The control rail lives in the gap between the tracking overlays and the
-  // details sheet, so it can never sit on top of either.
-  const controlRailTop = isFullScreen ? insets.top + 12 : Math.ceil(topOverlayBottom) + 12;
-  const controlRailBottom = Math.ceil(visibleSheetHeight + insets.bottom) + 12;
+  // details sheet, so it can never sit on top of either. When the resume pill is
+  // showing, the rail stops above it too.
+  const controlRailTop = isFullScreen ? insets.top + OVERLAY_GAP : Math.ceil(topOverlayBottom) + OVERLAY_GAP;
+  const controlRailBottom =
+    resumeButtonBottom +
+    (autoFollowSuspended && !isFullScreen ? overlayHeights.resume + OVERLAY_GAP : 0);
   const mapPadding = useMemo(() => {
     const viewportHeight = Math.max(mapSize.height || height, 1);
     const horizontal = Math.max(20, Math.min(52, (mapSize.width || width) * 0.06));
@@ -919,6 +964,41 @@ export default function VehicleTrackerScreen() {
       if (__DEV__) console.debug(`[VehicleModel] selected ${variant}`);
     },
     [devicePreferenceKey, dispatch, haptic]
+  );
+
+  const openVehiclePicker = useCallback(() => {
+    if (fleet.length <= 1) return;
+    haptic();
+    setVehiclePickerOpen(true);
+  }, [fleet.length, haptic]);
+
+  const closeVehiclePicker = useCallback(() => setVehiclePickerOpen(false), []);
+
+  /**
+   * Switches the tracked vehicle.
+   *
+   * Everything on this screen is derived from `params.deviceId`, so re-pointing
+   * the route params is enough to move the device detail query, the live SSE
+   * subscription, the route buffer and every readout (speed, ignition, GPS,
+   * trip) onto the newly selected vehicle. The reset effect below then clears
+   * the previous vehicle's route/camera state and re-centres the map.
+   */
+  const selectVehicle = useCallback(
+    (device: DeviceSummary) => {
+      setVehiclePickerOpen(false);
+      if (device.id === deviceId) return;
+      haptic();
+      router.setParams({
+        // Empty strings would win over the freshly fetched device detail (they
+        // are not nullish), so only pass through values we actually have.
+        ...(device.category ? { category: device.category } : {}),
+        ...(device.address ? { subtitle: device.address } : {}),
+        deviceId: String(device.id),
+        name: device.name,
+      });
+      showToast(`Tracking ${device.name}`);
+    },
+    [deviceId, haptic, router, showToast]
   );
 
   const snapSheet = useCallback(
@@ -1269,6 +1349,16 @@ export default function VehicleTrackerScreen() {
     });
   }, []);
 
+  /**
+   * Layout of the MAP surface itself.
+   *
+   * This must be the only writer of `mapSize`. It used to also be attached to
+   * the screen's SafeAreaView, whose box is taller than the map by the bottom
+   * inset — so the two callbacks fought over `mapSize`, which re-keyed (and so
+   * destroyed and recreated) the 3D overlay's GL surface on every layout pass
+   * and left the vehicle stuck on the 2D fallback. `pointForCoordinate` also
+   * projects into the map's box, so this is the size the overlay needs.
+   */
   const handleMapLayout = useCallback((event: LayoutChangeEvent) => {
     const { height: mapHeight, width: mapWidth } = event.nativeEvent.layout;
     const hasVisibleSize = mapHeight > 0 && mapWidth > 0;
@@ -1679,6 +1769,7 @@ export default function VehicleTrackerScreen() {
 
     if (!useNativeMap) {
       mapReadyRef.current = true;
+      mapLayoutReadyRef.current = true;
       setIsMapReady(true);
       setMapLoadState('ready');
       setMapErrorMessage('');
@@ -1847,7 +1938,7 @@ export default function VehicleTrackerScreen() {
   }
 
   return (
-    <SafeAreaView edges={['bottom']} onLayout={handleMapLayout} style={styles.screen}>
+    <SafeAreaView edges={['bottom']} style={styles.screen}>
       {useNativeMap ? (
         <MapView
           key={`route-map-${mapRetryKey}`}
@@ -1973,14 +2064,24 @@ export default function VehicleTrackerScreen() {
           style={styles.headerIconButton}>
           <MaterialCommunityIcons color={BRAND.green} name="arrow-left" size={30} />
         </Pressable>
-        <View style={styles.headerTextBlock}>
-          <Text numberOfLines={1} style={styles.headerTitle}>
-            {vehicleName}
-          </Text>
+        <Pressable
+          accessibilityHint="Switch to another vehicle"
+          accessibilityLabel={`Tracking ${vehicleName}. Tap to change vehicle.`}
+          accessibilityRole="button"
+          onPress={openVehiclePicker}
+          style={styles.headerTextBlock}>
+          <View style={styles.headerTitleRow}>
+            <Text numberOfLines={1} style={styles.headerTitle}>
+              {vehicleName}
+            </Text>
+            {fleet.length > 1 ? (
+              <MaterialCommunityIcons color={BRAND.greenGlow} name="chevron-down" size={18} />
+            ) : null}
+          </View>
           <Text numberOfLines={1} style={styles.headerSubtitle}>
             {currentAddress}
           </Text>
-        </View>
+        </Pressable>
         <Pressable
           accessibilityLabel={cinematicMode ? 'Hide cinematic controls' : 'Show cinematic map controls'}
           accessibilityRole="button"
@@ -2000,57 +2101,61 @@ export default function VehicleTrackerScreen() {
             size={25}
           />
         </Pressable>
-        <View
-          accessibilityLabel={`Vehicle status ${status}`}
-          style={[styles.statusPill, { backgroundColor: statusColor }]}>
-          <Text style={styles.statusPillText}>{status}</Text>
+        {/* Status and the live-feed indicator share one compact column on the
+            right of the header. The LIVE badge used to be a separate pill
+            floating over the map; folding it in here keeps the map clear. */}
+        <View style={styles.headerStatusColumn}>
+          <View
+            accessibilityLabel={`Vehicle status ${status}`}
+            style={[styles.statusPill, { backgroundColor: statusColor }]}>
+            <Text style={styles.statusPillText}>{status}</Text>
+          </View>
+          {liveEnabled ? (
+            <Pressable
+              accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
+              accessibilityRole="button"
+              hitSlop={6}
+              onPress={jumpToLive}
+              style={styles.liveInlineBadge}>
+              <View
+                style={[
+                  styles.liveDot,
+                  {
+                    backgroundColor:
+                      live.connected && !isLiveStale ? BRAND.greenGlow : BRAND.muted,
+                  },
+                ]}
+              />
+              <Text numberOfLines={1} style={styles.liveInlineText}>
+                {isLiveFollowing ? 'LIVE' : 'GO LIVE'}
+                {liveAgeSec != null
+                  ? ` · ${isLowAccuracy ? 'low' : isLiveStale ? 'delayed' : formatAge(liveAgeSec)}`
+                  : live.connected
+                    ? ' · wait'
+                    : ' · off'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       )}
 
-      {liveEnabled && !cinematicMode && !isFullScreen ? (
-        <Pressable
-          accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
-          accessibilityRole="button"
-          onLayout={(event) => measureOverlay('live', event)}
-          onPress={jumpToLive}
-          style={[
-            styles.livePill,
-            { top: livePillTop },
-            isLiveFollowing && live.connected && !isLiveStale
-              ? styles.livePillActive
-              : styles.livePillIdle,
-          ]}>
-          <View
-            style={[
-              styles.liveDot,
-              {
-                backgroundColor:
-                  live.connected && !isLiveStale ? BRAND.greenGlow : BRAND.muted,
-              },
-            ]}
-          />
-          <Text style={styles.livePillText}>
-            {isLiveFollowing ? 'LIVE' : 'GO LIVE'}
-            {liveAgeSec != null
-              ? ` | ${isLowAccuracy ? 'low accuracy | ' : isLiveStale ? 'delayed | ' : ''}${formatAge(liveAgeSec)}`
-              : live.connected
-                ? ' | waiting'
-                : ' | offline'}
-          </Text>
-        </Pressable>
-      ) : null}
-
-      {autoFollowSuspended && !cinematicMode && !isFullScreen ? (
-        <Pressable
-          accessibilityLabel="Resume Cinematic Tracking"
-          accessibilityRole="button"
+      {autoFollowSuspended && !isFullScreen ? (
+        <View
           onLayout={(event) => measureOverlay('resume', event)}
-          onPress={resumeCinematicTracking}
-          style={[styles.resumeTrackingButton, { top: resumeButtonTop }]}>
-          <MaterialCommunityIcons color="#07121B" name="navigation-variant" size={17} />
-          <Text style={styles.resumeTrackingText}>Resume Cinematic Tracking</Text>
-        </Pressable>
+          pointerEvents="box-none"
+          style={[styles.resumeTrackingSlot, { bottom: resumeButtonBottom }]}>
+          <FadeIn>
+            <Pressable
+              accessibilityLabel="Resume Cinematic Tracking"
+              accessibilityRole="button"
+              onPress={resumeCinematicTracking}
+              style={styles.resumeTrackingButton}>
+              <MaterialCommunityIcons color="#07121B" name="navigation-variant" size={16} />
+              <Text style={styles.resumeTrackingText}>Resume tracking</Text>
+            </Pressable>
+          </FadeIn>
+        </View>
       ) : null}
 
       {cinematicMode && !isFullScreen ? (
@@ -2113,7 +2218,9 @@ export default function VehicleTrackerScreen() {
         </View>
       ) : null}
 
-      {/* Native-map camera modes stay selected until the user changes mode. */}
+      {/* Native-map camera modes stay selected until the user changes mode.
+          One horizontally scrollable row keeps this to a single line on every
+          screen width instead of wrapping into a block that eats the map. */}
       {isFullScreen ? null : (
       <View
         onLayout={(event) => measureOverlay('camera', event)}
@@ -2123,29 +2230,39 @@ export default function VehicleTrackerScreen() {
           { top: cameraBarTop },
           cinematicMode && styles.hiddenControls,
         ]}>
-        {CAMERA_MODE_ORDER.map((mode) => {
-          const active =
-            cameraMode === mode &&
-            !autoFollowSuspended &&
-            (mode === 'overview' ? !isFollowing : isFollowing);
-          return (
-            <Pressable
-              accessibilityLabel={`${CAMERA_MODES[mode].label} camera`}
-              accessibilityRole="button"
-              key={mode}
-              onPress={() => selectCameraMode(mode)}
-              style={[styles.cameraChip, active && styles.cameraChipActive]}>
-              <MaterialCommunityIcons
-                color={active ? '#fff' : BRAND.green}
-                name={CAMERA_MODES[mode].icon as React.ComponentProps<typeof MaterialCommunityIcons>['name']}
-                size={18}
-              />
-              <Text style={[styles.cameraChipText, active && styles.cameraChipTextActive]}>
-                {CAMERA_MODES[mode].label}
-              </Text>
-            </Pressable>
-          );
-        })}
+        <ScrollView
+          contentContainerStyle={styles.cameraModeContent}
+          horizontal
+          showsHorizontalScrollIndicator={false}>
+          {CAMERA_MODE_ORDER.map((mode) => {
+            const active =
+              cameraMode === mode &&
+              !autoFollowSuspended &&
+              (mode === 'overview' ? !isFollowing : isFollowing);
+            return (
+              <Pressable
+                accessibilityLabel={`${CAMERA_MODES[mode].label} camera`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                key={mode}
+                onPress={() => selectCameraMode(mode)}
+                style={({ pressed }) => [
+                  styles.cameraChip,
+                  active && styles.cameraChipActive,
+                  pressed && styles.pressedControl,
+                ]}>
+                <MaterialCommunityIcons
+                  color={active ? '#fff' : BRAND.greenGlow}
+                  name={CAMERA_MODES[mode].icon as React.ComponentProps<typeof MaterialCommunityIcons>['name']}
+                  size={16}
+                />
+                <Text style={[styles.cameraChipText, active && styles.cameraChipTextActive]}>
+                  {CAMERA_MODES[mode].label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
       )}
 
@@ -2193,6 +2310,14 @@ export default function VehicleTrackerScreen() {
       />
       )}
 
+      <VehiclePickerSheet
+        devices={fleet}
+        onClose={closeVehiclePicker}
+        onSelect={selectVehicle}
+        selectedId={deviceId ?? null}
+        visible={vehiclePickerOpen}
+      />
+
       {toastText ? (
         <View
           pointerEvents="none"
@@ -2214,6 +2339,134 @@ export default function VehicleTrackerScreen() {
     </SafeAreaView>
   );
 }
+
+/**
+ * Fades and lifts its child in on mount.
+ *
+ * Used for the floating pills so they appear the way a Maps-style control does
+ * rather than popping into place. Native-driven, so it costs nothing per frame.
+ */
+function FadeIn({ children }: { children: React.ReactNode }) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.spring(progress, {
+      damping: 18,
+      mass: 0.7,
+      stiffness: 220,
+      toValue: 1,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [progress]);
+
+  return (
+    <Animated.View
+      style={{
+        opacity: progress,
+        transform: [
+          { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) },
+        ],
+      }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+/**
+ * Vehicle switcher.
+ *
+ * Opened from the header title. Choosing a vehicle re-points the whole screen
+ * (live stream, detail query, route, camera) at that device — this is the
+ * vehicle filter, and is deliberately separate from the 3D model picker, which
+ * only changes how the selected vehicle is drawn.
+ */
+const VehiclePickerSheet = memo(function VehiclePickerSheet({
+  devices,
+  onClose,
+  onSelect,
+  selectedId,
+  visible,
+}: {
+  devices: DeviceSummary[];
+  onClose: () => void;
+  onSelect: (device: DeviceSummary) => void;
+  selectedId: number | null;
+  visible: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
+      <Pressable
+        accessibilityLabel="Close vehicle list"
+        accessibilityRole="button"
+        onPress={onClose}
+        style={styles.pickerBackdrop}
+      />
+      <View style={[styles.pickerSheet, { paddingBottom: insets.bottom + 12 }]}>
+        <View style={styles.pickerHandle} />
+        <Text style={styles.pickerTitle}>Select vehicle</Text>
+        <Text style={styles.pickerSubtitle}>
+          {devices.length} vehicle{devices.length === 1 ? '' : 's'} in this fleet
+        </Text>
+        <ScrollView
+          contentContainerStyle={styles.pickerList}
+          showsVerticalScrollIndicator={false}
+          style={styles.pickerScroll}>
+          {devices.map((device) => {
+            const active = device.id === selectedId;
+            const state = (device.state ?? '').toUpperCase();
+            return (
+              <Pressable
+                accessibilityLabel={`Track ${device.name}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                key={device.id}
+                onPress={() => onSelect(device)}
+                style={({ pressed }) => [
+                  styles.pickerRow,
+                  active && styles.pickerRowActive,
+                  pressed && styles.pressedControl,
+                ]}>
+                <View
+                  style={[
+                    styles.pickerDot,
+                    {
+                      backgroundColor:
+                        state === 'RUNNING'
+                          ? BRAND.greenGlow
+                          : state === 'IDLE'
+                            ? '#F5A623'
+                            : state === 'STOPPED'
+                              ? BRAND.red
+                              : BRAND.muted,
+                    },
+                  ]}
+                />
+                <View style={styles.pickerRowText}>
+                  <Text numberOfLines={1} style={styles.pickerRowName}>
+                    {device.name}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.pickerRowMeta}>
+                    {device.address ?? 'Address unavailable'}
+                  </Text>
+                </View>
+                <Text style={styles.pickerRowSpeed}>
+                  {Math.max(0, Math.round(device.speed ?? 0))} km/h
+                </Text>
+                {active ? (
+                  <MaterialCommunityIcons color={BRAND.greenGlow} name="check-circle" size={20} />
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+});
 
 type MapControl = {
   active?: boolean;
@@ -2255,7 +2508,11 @@ const MapControlRail = memo(function MapControlRail({
         accessibilityRole="button"
         accessibilityState={{ expanded }}
         onPress={onToggleExpanded}
-        style={[styles.controlButton, styles.controlToggle]}>
+        style={({ pressed }) => [
+          styles.controlButton,
+          styles.controlToggle,
+          pressed && styles.pressedControl,
+        ]}>
         <MaterialCommunityIcons
           color={BRAND.greenGlow}
           name={expanded ? 'chevron-right' : 'tune-vertical'}
@@ -2263,35 +2520,42 @@ const MapControlRail = memo(function MapControlRail({
         />
       </Pressable>
       {expanded ? (
-        <ScrollView
-          contentContainerStyle={styles.controlStack}
-          showsVerticalScrollIndicator={false}
-          style={styles.controlScroll}>
-          {controls.map((control) => (
-            <Pressable
-              accessibilityLabel={control.label}
-              accessibilityRole="button"
-              accessibilityState={{ selected: Boolean(control.active) }}
-              key={control.label}
-              onPress={control.onPress}
-              style={[
-                styles.controlButton,
-                control.active && styles.controlButtonActive,
-                control.danger && styles.controlButtonDanger,
-              ]}>
-              <MaterialCommunityIcons
-                color={control.danger ? BRAND.orange : control.active ? '#07121B' : '#DCE9F4'}
-                name={control.icon}
-                size={20}
-                style={
-                  control.rotation
-                    ? { transform: [{ rotate: `${control.rotation}deg` }] }
-                    : undefined
-                }
-              />
-            </Pressable>
-          ))}
-        </ScrollView>
+        <FadeIn>
+          {/* One evenly spaced column of identically sized buttons. The rail is
+              bounded above by the tracking overlays and below by the sheet, and
+              scrolls internally, so it stays fully reachable on short screens
+              and never overlaps another layer. */}
+          <ScrollView
+            contentContainerStyle={styles.controlStack}
+            showsVerticalScrollIndicator={false}
+            style={styles.controlScroll}>
+            {controls.map((control) => (
+              <Pressable
+                accessibilityLabel={control.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: Boolean(control.active) }}
+                key={control.label}
+                onPress={control.onPress}
+                style={({ pressed }) => [
+                  styles.controlButton,
+                  control.active && styles.controlButtonActive,
+                  control.danger && styles.controlButtonDanger,
+                  pressed && styles.pressedControl,
+                ]}>
+                <MaterialCommunityIcons
+                  color={control.danger ? BRAND.orange : control.active ? '#07121B' : '#DCE9F4'}
+                  name={control.icon}
+                  size={20}
+                  style={
+                    control.rotation
+                      ? { transform: [{ rotate: `${control.rotation}deg` }] }
+                      : undefined
+                  }
+                />
+              </Pressable>
+            ))}
+          </ScrollView>
+        </FadeIn>
       ) : null}
     </View>
   );
@@ -2810,26 +3074,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(7, 15, 27, 0.94)',
     borderColor: 'rgba(255, 255, 255, 0.14)',
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 1,
+    elevation: 8,
     flexDirection: 'row',
-    gap: 10,
-    left: 18,
-    minHeight: 70,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    gap: 8,
+    left: OVERLAY_GAP + 4,
+    minHeight: 64,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     position: 'absolute',
-    right: 18,
+    right: OVERLAY_GAP + 4,
     shadowColor: '#020712',
-    shadowOffset: { width: 0, height: 9 },
-    shadowOpacity: 0.32,
-    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.34,
+    shadowRadius: 20,
   },
   headerIconButton: {
     alignItems: 'center',
-    height: 44,
+    height: 40,
     justifyContent: 'center',
-    width: 38,
+    width: 36,
+  },
+  headerTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  headerStatusColumn: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  liveInlineBadge: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+  },
+  liveInlineText: {
+    color: '#9DB2C6',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  pressedControl: {
+    opacity: 0.75,
+    transform: [{ scale: 0.96 }],
   },
   headerCinemaActive: {
     backgroundColor: BRAND.greenGlow,
@@ -2854,11 +3143,11 @@ const styles = StyleSheet.create({
   },
   statusPill: {
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 10,
     justifyContent: 'center',
-    minWidth: 72,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
+    minWidth: 66,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   statusPillActive: {
     backgroundColor: BRAND.green,
@@ -2873,88 +3162,113 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     textTransform: 'uppercase',
   },
-  livePill: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 7,
-    left: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    position: 'absolute',
-    shadowColor: '#1b1f24',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
-    shadowRadius: 8,
-  },
-  livePillActive: {
-    backgroundColor: 'rgba(5, 101, 42, 0.94)',
-    borderColor: 'rgba(43, 230, 158, 0.6)',
-  },
-  livePillIdle: {
-    backgroundColor: 'rgba(22, 32, 44, 0.88)',
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-  },
   liveDot: {
-    borderRadius: 4,
-    height: 8,
-    width: 8,
+    borderRadius: 3.5,
+    height: 7,
+    width: 7,
   },
-  livePillText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.4,
+  // The pill floats just above the details sheet, so it can never sit over the
+  // vehicle, the route, or the road ahead of it.
+  resumeTrackingSlot: {
+    alignItems: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
   },
   resumeTrackingButton: {
     alignItems: 'center',
-    alignSelf: 'center',
     backgroundColor: BRAND.greenGlow,
-    borderRadius: 18,
-    elevation: 4,
+    borderRadius: 999,
+    elevation: 6,
     flexDirection: 'row',
-    gap: 7,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    position: 'absolute',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     shadowColor: '#020712',
     shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.24,
-    shadowRadius: 10,
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
   },
   resumeTrackingText: {
     color: '#07121B',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '900',
   },
+  pickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(3, 8, 16, 0.62)',
+  },
+  pickerSheet: {
+    backgroundColor: 'rgba(9, 17, 29, 0.99)',
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    bottom: 0,
+    left: 0,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    position: 'absolute',
+    right: 0,
+  },
+  pickerHandle: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(190, 210, 228, 0.34)',
+    borderRadius: 2,
+    height: 4,
+    marginBottom: 12,
+    width: 44,
+  },
+  pickerTitle: { color: '#F3F8FD', fontSize: 17, fontWeight: '900' },
+  pickerSubtitle: { color: '#8FA5B9', fontSize: 11, fontWeight: '700', marginTop: 2 },
+  pickerScroll: { marginTop: 12, maxHeight: 360 },
+  pickerList: { gap: 8, paddingBottom: 4 },
+  pickerRow: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderColor: 'rgba(255,255,255,0.09)',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  pickerRowActive: {
+    backgroundColor: 'rgba(43, 230, 158, 0.12)',
+    borderColor: 'rgba(43, 230, 158, 0.55)',
+  },
+  pickerDot: { borderRadius: 5, height: 10, width: 10 },
+  pickerRowText: { flex: 1, minWidth: 0 },
+  pickerRowName: { color: '#EDF5FB', fontSize: 14, fontWeight: '800' },
+  pickerRowMeta: { color: '#8298AC', fontSize: 11, marginTop: 2 },
+  pickerRowSpeed: { color: '#B9C9D7', fontSize: 11, fontWeight: '800' },
   hiddenControls: {
     opacity: 0,
   },
   controlRail: {
     alignItems: 'flex-end',
-    gap: 8,
+    gap: OVERLAY_GAP,
     position: 'absolute',
-    right: 12,
+    right: OVERLAY_GAP + 4,
     zIndex: 25,
   },
   controlScroll: { flexGrow: 0 },
-  controlStack: { gap: 8, paddingBottom: 2 },
+  controlStack: { gap: OVERLAY_GAP, paddingBottom: 2 },
   controlButton: {
     alignItems: 'center',
     backgroundColor: 'rgba(9, 18, 31, 0.92)',
     borderColor: 'rgba(255,255,255,0.16)',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    elevation: 4,
-    height: 42,
+    elevation: 5,
+    height: CONTROL_BUTTON_SIZE,
     justifyContent: 'center',
     shadowColor: '#020712',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.32,
-    shadowRadius: 8,
-    width: 42,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 10,
+    width: CONTROL_BUTTON_SIZE,
   },
   controlToggle: { backgroundColor: 'rgba(9, 18, 31, 0.96)' },
   controlButtonActive: {
@@ -2968,10 +3282,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     gap: 9,
-    left: 18,
+    left: OVERLAY_GAP + 4,
     padding: 10,
     position: 'absolute',
-    right: 18,
+    right: OVERLAY_GAP + 4,
     shadowColor: '#020712',
     shadowOffset: { width: 0, height: 9 },
     shadowOpacity: 0.35,
@@ -3045,30 +3359,30 @@ const styles = StyleSheet.create({
     color: '#07121B',
   },
   cameraModeBar: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    justifyContent: 'center',
     left: 0,
-    paddingHorizontal: 8,
     position: 'absolute',
     right: 0,
+  },
+  cameraModeContent: {
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: OVERLAY_GAP + 4,
   },
   cameraChip: {
     alignItems: 'center',
     backgroundColor: 'rgba(7, 15, 27, 0.9)',
     borderColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 18,
+    borderRadius: 999,
     borderWidth: 1,
+    elevation: 3,
     flexDirection: 'row',
     gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    height: 34,
+    paddingHorizontal: 11,
     shadowColor: '#020712',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
+    shadowOpacity: 0.24,
+    shadowRadius: 8,
   },
   cameraChipActive: {
     backgroundColor: BRAND.green,

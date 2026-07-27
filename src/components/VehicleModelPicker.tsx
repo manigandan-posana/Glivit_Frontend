@@ -46,10 +46,15 @@ export function VehicleModelPicker({
           {errorMessage ? (
             <MaterialCommunityIcons color="#FF8B78" name="alert-circle-outline" size={13} />
           ) : null}
+          {/* The label keeps naming the SELECTED model even when the 3D
+              renderer is unavailable — the previous "2D fallback" text replaced
+              the name entirely, so the picker looked like it had lost the
+              user's choice. The renderer state is a suffix, not a replacement. */}
           <Text
             numberOfLines={1}
             style={[styles.selectedLabel, errorMessage && styles.selectedLabelError]}>
-            {errorMessage ? '2D fallback' : loading ? `Loading ${selected.label}` : selected.label}
+            {loading ? `Loading ${selected.label}` : selected.label}
+            {errorMessage && !loading ? ' · 2D' : ''}
           </Text>
         </View>
       </View>
