@@ -34,6 +34,7 @@ export function VehicleModelPicker({
   loading = false,
 }: Props) {
   const selected = getVehicleModel(value);
+  const cardWidth = compact ? COMPACT_CARD_WIDTH : CARD_WIDTH;
   return (
     <View style={styles.root}>
       <View style={styles.labelRow}>
@@ -54,8 +55,11 @@ export function VehicleModelPicker({
       </View>
       <ScrollView
         contentContainerStyle={styles.content}
+        decelerationRate="fast"
         horizontal
-        showsHorizontalScrollIndicator={false}>
+        showsHorizontalScrollIndicator={false}
+        snapToAlignment="start"
+        snapToInterval={cardWidth + CARD_GAP}>
         {VEHICLE_MODELS.map((model) => {
           const active = model.id === value;
           return (
@@ -65,7 +69,12 @@ export function VehicleModelPicker({
               accessibilityState={{ selected: active }}
               key={model.id}
               onPress={() => onChange(model.id)}
-              style={[styles.choice, compact && styles.choiceCompact, active && styles.choiceActive]}>
+              style={[
+                styles.choice,
+                { width: cardWidth },
+                compact && styles.choiceCompact,
+                active && styles.choiceActive,
+              ]}>
               <View style={[styles.swatch, { backgroundColor: model.paintColor }]}>
                 <MaterialCommunityIcons
                   color={isLightColor(model.paintColor) ? '#18212B' : '#FFFFFF'}
@@ -73,9 +82,14 @@ export function VehicleModelPicker({
                   size={compact ? 14 : 16}
                 />
               </View>
-              <Text numberOfLines={1} style={[styles.choiceText, active && styles.choiceTextActive]}>
+              {/* Two lines so long names ("Lamborghini Gallardo") are shown in
+                  full rather than truncated inside a fixed-width card. */}
+              <Text numberOfLines={2} style={[styles.choiceText, active && styles.choiceTextActive]}>
                 {model.label}
               </Text>
+              {active ? (
+                <MaterialCommunityIcons color="#28D995" name="check-circle" size={13} />
+              ) : null}
             </Pressable>
           );
         })}
@@ -93,6 +107,12 @@ function isLightColor(color: string) {
   return red * 0.299 + green * 0.587 + blue * 0.114 > 175;
 }
 
+// Cards are a fixed width so every label has a predictable amount of room and
+// the row snaps card-to-card instead of stopping with one clipped in half.
+const CARD_WIDTH = 148;
+const COMPACT_CARD_WIDTH = 132;
+const CARD_GAP = 8;
+
 const styles = StyleSheet.create({
   root: { gap: 7, minWidth: 0 },
   labelRow: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingHorizontal: 2 },
@@ -107,7 +127,8 @@ const styles = StyleSheet.create({
   },
   selectedLabel: { color: '#B9C9D7', flexShrink: 1, fontSize: 11, fontWeight: '700', textAlign: 'right' },
   selectedLabelError: { color: '#FFAA9D' },
-  content: { gap: 7, paddingRight: 8 },
+  // The trailing pad lets the last card scroll clear of the container edge.
+  content: { gap: CARD_GAP, paddingLeft: 2, paddingRight: 14 },
   choice: {
     alignItems: 'center',
     backgroundColor: 'rgba(11, 18, 28, 0.88)',
@@ -116,12 +137,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 7,
-    maxWidth: 154,
-    minHeight: 40,
+    minHeight: 46,
     paddingHorizontal: 9,
     paddingVertical: 7,
   },
-  choiceCompact: { minHeight: 34, paddingHorizontal: 7, paddingVertical: 5 },
+  choiceCompact: { minHeight: 42, paddingHorizontal: 8, paddingVertical: 6 },
   choiceActive: {
     backgroundColor: 'rgba(25, 208, 134, 0.14)',
     borderColor: '#28D995',
@@ -135,6 +155,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 29,
   },
-  choiceText: { color: '#AAB9C7', flexShrink: 1, fontSize: 11, fontWeight: '800' },
+  choiceText: {
+    color: '#AAB9C7',
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 14,
+    minWidth: 0,
+  },
   choiceTextActive: { color: '#F3FBF8' },
 });

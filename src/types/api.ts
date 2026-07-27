@@ -86,6 +86,12 @@ export type DeviceSummary = {
   lastUpdate?: string | null;
   expiryDate?: string | null;
   status: string;
+  /** Engine cut by an ENGINE_CUT command; cleared by ENGINE_RESTORE. */
+  immobilised?: boolean;
+  /** Locked by a LOCK command; cleared by UNLOCK. */
+  locked?: boolean;
+  lastCommandType?: string | null;
+  lastCommandAt?: string | null;
 };
 
 export type DeviceDetail = DeviceSummary & {

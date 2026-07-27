@@ -1,14 +1,13 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { DeviceCreateForm } from '@/src/components/DeviceCreateForm';
 import { Button } from '@/src/components/ui/Button';
 import { Card } from '@/src/components/ui/Card';
 import { Chip, EmptyLine, RowCard } from '@/src/components/ui/ModulePrimitives';
 import { TextField } from '@/src/components/ui/TextField';
 import { P } from '@/src/constants/permissions';
 import { apiErrorMessage } from '@/src/services/apiError';
-import { useCreateDeviceMutation } from '@/src/services/devicesApi';
 import {
   useCreateDriverMutation,
   useCreateGroupMutation,
@@ -22,7 +21,7 @@ import {
 } from '@/src/services/operationsApi';
 import { useHasPermission } from '@/src/store/hooks';
 import { useTheme } from '@/src/theme/ThemeProvider';
-import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+import { spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type Tab = 'devices' | 'users' | 'projects' | 'drivers' | 'groups' | 'audit';
 type NewUserDraft = { name: string; username: string; password: string; role: 'ADMIN' | 'DRIVER' };
@@ -52,36 +51,15 @@ export default function ManagementScreen() {
   const users = useGetUsersQuery({ size: 50 }, { skip: !canUsers });
   const audit = useGetAuditQuery({ size: 50 }, { skip: !canAudit });
 
-  const [createDevice, deviceState] = useCreateDeviceMutation();
   const [createProject, projectState] = useCreateProjectMutation();
   const [createDriver, driverState] = useCreateDriverMutation();
   const [createGroup, groupState] = useCreateGroupMutation();
   const [createUser, userState] = useCreateUserMutation();
 
-  const [device, setDevice] = React.useState({ name: '', imei: '', category: 'CAR', driverName: '', driverPhone: '' });
   const [projectName, setProjectName] = React.useState('');
   const [driverName, setDriverName] = React.useState('');
   const [groupName, setGroupName] = React.useState('');
   const [newUser, setNewUser] = React.useState<NewUserDraft>({ name: '', username: '', password: '', role: 'ADMIN' });
-
-  const submitDevice = async () => {
-    try {
-      await createDevice({
-        name: device.name.trim(),
-        imei: device.imei.trim(),
-        category: device.category,
-        driverName: device.driverName.trim() || undefined,
-        driverPhone: device.driverPhone.trim() || undefined,
-        expiryDate: nextYear(),
-        timezone: 'Asia/Kolkata',
-        distanceUnit: 'KM',
-        speedUnit: 'KMH',
-      }).unwrap();
-      setDevice({ name: '', imei: '', category: 'CAR', driverName: '', driverPhone: '' });
-    } catch (err) {
-      Alert.alert('Device not saved', apiErrorMessage(err));
-    }
-  };
 
   const submitProject = async () => {
     try {
@@ -138,41 +116,7 @@ export default function ManagementScreen() {
         ))}
       </View>
 
-      {tab === 'devices' && canDevices ? (
-        <Card style={styles.form}>
-          <Text style={styles.title}>Create GPS Device</Text>
-          <TextField label="Vehicle name / number" onChangeText={(name) => setDevice((v) => ({ ...v, name }))} value={device.name} />
-          <View style={styles.imeiRow}>
-            <View style={styles.imeiInput}>
-              <TextField label="IMEI" onChangeText={(imei) => setDevice((v) => ({ ...v, imei }))} value={device.imei} />
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => Alert.alert('Scan IMEI', 'QR/barcode scanner is enabled in native builds with camera permission.')}
-              style={styles.scanButton}>
-              <MaterialCommunityIcons color={c.primary} name="qrcode-scan" size={24} />
-            </Pressable>
-          </View>
-          <View style={styles.categoryRow}>
-            {['CAR', 'TRUCK', 'BUS', 'BIKE'].map((category) => (
-              <Chip
-                key={category}
-                active={device.category === category}
-                label={category}
-                onPress={() => setDevice((v) => ({ ...v, category }))}
-              />
-            ))}
-          </View>
-          <TextField label="Driver name" onChangeText={(driverName) => setDevice((v) => ({ ...v, driverName }))} value={device.driverName} />
-          <TextField
-            keyboardType="phone-pad"
-            label="Driver phone"
-            onChangeText={(driverPhone) => setDevice((v) => ({ ...v, driverPhone }))}
-            value={device.driverPhone}
-          />
-          <Button disabled={!device.name.trim() || !device.imei.trim()} label="Save device" loading={deviceState.isLoading} onPress={submitDevice} />
-        </Card>
-      ) : null}
+      {tab === 'devices' && canDevices ? <DeviceCreateForm /> : null}
 
       {tab === 'users' && canUsers ? (
         <Section
@@ -284,29 +228,11 @@ function label(tab: Tab) {
   return tab.charAt(0).toUpperCase() + tab.slice(1);
 }
 
-function nextYear() {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
     content: { backgroundColor: c.pageBackground, gap: spacing.md, padding: spacing.md },
     tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     form: { gap: spacing.md },
     title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
-    imeiRow: { alignItems: 'flex-end', flexDirection: 'row', gap: spacing.sm },
-    imeiInput: { flex: 1, minWidth: 0 },
-    scanButton: {
-      alignItems: 'center',
-      backgroundColor: c.accentSoft,
-      borderColor: c.accent,
-      borderRadius: radius.sm,
-      borderWidth: StyleSheet.hairlineWidth * 2,
-      height: 52,
-      justifyContent: 'center',
-      width: 52,
-    },
     categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   });

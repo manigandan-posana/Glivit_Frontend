@@ -156,7 +156,17 @@ export const operationsApi = baseApi.injectEndpoints({
     submitCommand: build.mutation<CommandDto, CommandRequest>({
       query: (body) => ({ url: '/commands', method: 'POST', body }),
       transformResponse: (response: ApiResponse<CommandDto>) => unwrap(response),
-      invalidatesTags: ['Command', 'Audit'],
+      // LOCK / UNLOCK / ENGINE_CUT / ENGINE_RESTORE change the device's derived
+      // state and speed server-side, so the device caches must be refetched --
+      // without this the fleet map and live-track screens kept showing the
+      // vehicle running after it had been immobilised.
+      invalidatesTags: (_result, _error, arg) => [
+        'Command',
+        'Audit',
+        'Dashboard',
+        'Device',
+        { type: 'Device' as const, id: arg.deviceId },
+      ],
     }),
     getReports: build.query<PageResponse<ReportDto>, { page?: number; size?: number }>({
       query: ({ page = 0, size = 20 }) => ({ url: '/reports', params: { page, size } }),

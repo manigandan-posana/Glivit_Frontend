@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.vehiclemoment.tracker",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Your location is shown on the tracking map so you can see where you are relative to the fleet."
+      }
     },
     "android": {
       "package": "com.vehiclemoment.tracker",
@@ -22,7 +25,9 @@
       },
       "permissions": [
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ],
       "usesCleartextTraffic": false,
       "edgeToEdgeEnabled": true,

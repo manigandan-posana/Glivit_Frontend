@@ -10,8 +10,11 @@ import {
   type LayoutChangeEvent,
   Linking,
   PanResponder,
+  type PanResponderInstance,
+  PermissionsAndroid,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -67,6 +70,8 @@ const LIVE_STALE_AFTER_SEC = 15;
 // the newest streamed fix.
 const LIVE_TRANSITION_MIN_MS = 420;
 const LIVE_TRANSITION_MAX_MS = 3600;
+/** How often the live catch-up pushes a new position into React state (~30fps). */
+const LIVE_PUBLISH_INTERVAL_MS = 33;
 
 type CameraMode = 'follow' | 'chase' | 'cinematic' | 'top' | 'drone' | 'overview';
 const CAMERA_MODES: Record<
@@ -104,6 +109,16 @@ const CINEMATIC_CAMERAS: {
 const CONTACT_PHONE = '+919876543210';
 
 type MapLoadState = 'loading' | 'ready' | 'error';
+/** react-native-maps base layers, cycled by the map-type control. */
+type NativeMapType = 'standard' | 'satellite' | 'hybrid';
+const MAP_TYPE_ORDER: NativeMapType[] = ['standard', 'satellite', 'hybrid'];
+const MAP_TYPE_LABEL: Record<NativeMapType, string> = {
+  standard: 'Normal map',
+  satellite: 'Satellite map',
+  hybrid: 'Hybrid map',
+};
+const MAP_ZOOM_MIN = 3;
+const MAP_ZOOM_MAX = 20;
 type RouteMapOptionId =
   | 'parking'
   | 'refresh'
@@ -296,7 +311,7 @@ export default function VehicleTrackerScreen() {
   // A real, tenant-scoped device is selected (not the offline/demo screen).
   const hasRealDevice = deviceId != null && !Number.isNaN(deviceId) && !env.demoMode;
   const validDeviceId = deviceId != null && !Number.isNaN(deviceId);
-  const { data: deviceDetail } = useGetDeviceQuery(deviceId as number, {
+  const { data: deviceDetail, refetch: refetchDevice } = useGetDeviceQuery(deviceId as number, {
     skip: !validDeviceId,
   });
   const vehicleName =
@@ -418,6 +433,14 @@ export default function VehicleTrackerScreen() {
     x: number;
     y: number;
   } | null>(null);
+  // Native map layer controls. These drive react-native-maps' own layers and are
+  // deliberately separate from the styling toggles above (`isSatelliteMode`
+  // picks a custom JSON style, `isTrafficVisible` shows the green route line).
+  const [mapType, setMapType] = useState<NativeMapType>('standard');
+  const [showsTrafficLayer, setShowsTrafficLayer] = useState(false);
+  const [showsUserLocation, setShowsUserLocation] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [controlsExpanded, setControlsExpanded] = useState(true);
   const [mapSize, setMapSize] = useState({ height, width });
   const [overlayHeights, setOverlayHeights] = useState({
     camera: 54,
@@ -452,6 +475,12 @@ export default function VehicleTrackerScreen() {
     [sample, route]
   );
   const heading = sample?.heading ?? 0;
+  // Live values change on every animation frame. Callbacks read them through a
+  // ref instead of closing over them, so their identity stays stable and the
+  // memoised bottom sheet is not re-rendered (and its native-driven transform
+  // not re-attached) 60 times a second.
+  const liveRef = useRef({ coordinate: vehicleCoordinate, heading });
+  liveRef.current = { coordinate: vehicleCoordinate, heading };
   // The rendered route only depends on accepted GPS history, never on the
   // per-frame playback position, so it is not rebuilt on every animation frame.
   const renderRoute = useMemo(() => simplifyRouteForRender(route), [route]);
@@ -471,26 +500,35 @@ export default function VehicleTrackerScreen() {
 
   const coveredKm = sample?.distanceKm ?? 0;
   // Speed is the live-reported value at the current fix — never synthesized.
-  const currentSpeed = Math.max(0, Math.round(sample?.speed ?? 0));
+  const reportedSpeed = Math.max(0, Math.round(sample?.speed ?? 0));
   const isLiveStale =
     live.quality === 'stale' ||
     (liveAgeSec != null && liveAgeSec >= LIVE_STALE_AFTER_SEC);
   const isLowAccuracy = live.quality === 'low_accuracy';
   const hasInvalidLiveFix = live.quality === 'invalid' && !live.latest;
   const liveState = live.latest?.state?.trim().toUpperCase();
+  // A remotely cut or locked vehicle cannot be moving whatever the last GPS fix
+  // said, so immobilisation outranks the live stream. The flag is refetched when
+  // a command invalidates the device cache.
+  const isImmobilised = Boolean(deviceDetail?.immobilised || deviceDetail?.locked);
+  const currentSpeed = isImmobilised ? 0 : reportedSpeed;
   const status = isAlertActive
     ? 'Alert'
-    : liveEnabled && (!live.connected || isLiveStale)
-      ? 'Offline'
-      : hasInvalidLiveFix
-        ? 'GPS error'
-        : isLowAccuracy
-          ? 'Low accuracy'
-          : liveState === 'IDLE'
-            ? 'Idle'
-            : liveState === 'STOPPED'
-              ? 'Stopped'
-              : 'Running';
+    : isImmobilised
+      ? deviceDetail?.immobilised
+        ? 'Engine cut'
+        : 'Locked'
+      : liveEnabled && (!live.connected || isLiveStale)
+        ? 'Offline'
+        : hasInvalidLiveFix
+          ? 'GPS error'
+          : isLowAccuracy
+            ? 'Low accuracy'
+            : liveState === 'IDLE'
+              ? 'Idle'
+              : liveState === 'STOPPED'
+                ? 'Stopped'
+                : 'Running';
   const statusColor =
     status === 'Running'
       ? BRAND.greenGlow
@@ -499,7 +537,17 @@ export default function VehicleTrackerScreen() {
         : status === 'Offline'
           ? BRAND.muted
           : BRAND.red;
-  const currentAddress = live.latest?.address?.trim() || vehicleSubtitle;
+  // Not every streamed fix carries a reverse-geocoded address. Falling back to
+  // the route param on those fixes made the sheet's two-line address snap
+  // between one and two lines on alternating updates, so the last known address
+  // is kept until a new one actually arrives.
+  const lastAddressRef = useRef<string | null>(null);
+  const streamedAddress = live.latest?.address?.trim();
+  if (streamedAddress) lastAddressRef.current = streamedAddress;
+  const currentAddress = lastAddressRef.current ?? vehicleSubtitle;
+  const ignitionText =
+    live.latest?.ignition == null ? 'Unknown' : live.latest.ignition ? 'On' : 'Off';
+  const gpsText = live.connected && !isLiveStale ? 'Connected' : isLiveStale ? 'Delayed' : 'Offline';
   // Ping time reflects the last recorded fix, not wall-clock.
   const pingTime = useMemo(() => {
     const last = track.points[track.points.length - 1];
@@ -515,8 +563,8 @@ export default function VehicleTrackerScreen() {
     setIsFollowing(true);
     if (cameraMode === 'overview') setCameraMode('follow');
     setIsLiveFollowing(true);
-    setElapsedMs(track.totalDurationMs);
-  }, [cameraMode, track.totalDurationMs]);
+    setElapsedMs(trackDurationRef.current);
+  }, [cameraMode]);
   const mapStyleInfo = useMemo(
     () => getMapStyleInfo(isNightMode ? 'dark' : isSatelliteMode ? 'bright' : 'street'),
     [isNightMode, isSatelliteMode]
@@ -540,9 +588,15 @@ export default function VehicleTrackerScreen() {
       : liveEnabled
         ? livePillTop + overlayHeights.live
         : cameraBarTop + overlayHeights.camera;
-  const visibleSheetHeight = sheetExpanded
-    ? sheetHeight || Math.min(420, Math.max(280, mapSize.height * 0.48))
-    : collapsedSheetHeight || 132;
+  const visibleSheetHeight = isFullScreen
+    ? 0
+    : sheetExpanded
+      ? sheetHeight || Math.min(420, Math.max(280, mapSize.height * 0.48))
+      : collapsedSheetHeight || 132;
+  // The control rail lives in the gap between the tracking overlays and the
+  // details sheet, so it can never sit on top of either.
+  const controlRailTop = isFullScreen ? insets.top + 12 : Math.ceil(topOverlayBottom) + 12;
+  const controlRailBottom = Math.ceil(visibleSheetHeight + insets.bottom) + 12;
   const mapPadding = useMemo(() => {
     const viewportHeight = Math.max(mapSize.height || height, 1);
     const horizontal = Math.max(20, Math.min(52, (mapSize.width || width) * 0.06));
@@ -565,10 +619,24 @@ export default function VehicleTrackerScreen() {
     width,
   ]);
   const remainingDistanceKm = Math.max(totalDistanceKm - coveredKm, 0);
+  // Display strings are derived once and quantised to what is actually shown.
+  // Deriving the panel from the raw continuous values rebuilt it on every
+  // animation frame, which re-rendered the sheet even when nothing changed.
+  const coveredKmText = coveredKm.toFixed(1);
+  const totalKmText = totalDistanceKm.toFixed(1);
+  const remainingKmText = remainingDistanceKm.toFixed(1);
+  const headingDeg = Math.round(heading);
+  // Read out the newest accepted fix rather than the interpolated position, so
+  // the label reflects real GPS and changes once per fix instead of per frame.
+  const coordinateLabel = useMemo(() => {
+    const lastFix = track.points[track.points.length - 1];
+    return lastFix
+      ? formatCoordinate({ latitude: lastFix.lat, longitude: lastFix.lng })
+      : formatCoordinate({ latitude: 0, longitude: 0 });
+  }, [track.points]);
   const selectedOptionData = useMemo<RouteOptionData | null>(() => {
     if (!selectedOptionId) return null;
 
-    const coordinateLabel = formatCoordinate(vehicleCoordinate);
     const options: Record<RouteMapOptionId, RouteOptionData> = {
       parking: {
         icon: 'parking',
@@ -585,7 +653,7 @@ export default function VehicleTrackerScreen() {
         icon: 'refresh',
         metrics: [
           { label: 'Speed', value: `${currentSpeed} km/h` },
-          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKmText} km` },
           { label: 'Ping', value: pingTime },
         ],
         summary: 'Live tracking resumed and the camera is following the vehicle.',
@@ -596,7 +664,7 @@ export default function VehicleTrackerScreen() {
         icon: 'navigation-variant',
         metrics: [
           { label: 'Mode', value: isFollowing ? 'Following' : 'Manual' },
-          { label: 'Heading', value: `${Math.round(heading)} deg` },
+          { label: 'Heading', value: `${headingDeg} deg` },
           { label: 'Speed', value: `${currentSpeed} km/h` },
         ],
         summary: isFollowing ? 'Camera is locked to the playback marker.' : 'Camera is free for manual map viewing.',
@@ -630,7 +698,7 @@ export default function VehicleTrackerScreen() {
         metrics: [
           { label: 'Point', value: coordinateLabel },
           { label: 'Address', value: vehicleSubtitle },
-          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKmText} km` },
         ],
         summary: 'Camera centered on the current playback marker.',
         title: 'Location',
@@ -640,8 +708,8 @@ export default function VehicleTrackerScreen() {
         icon: 'road-variant',
         metrics: [
           { label: 'Route', value: isTrafficVisible ? 'Visible' : 'Hidden' },
-          { label: 'Remaining', value: `${remainingDistanceKm.toFixed(1)} km` },
-          { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
+          { label: 'Remaining', value: `${remainingKmText} km` },
+          { label: 'Trip', value: `${totalKmText} km` },
         ],
         // The tracking route is a single green line with no congestion/speed
         // colours; this control only shows or hides that one line.
@@ -666,8 +734,8 @@ export default function VehicleTrackerScreen() {
         icon: 'directions',
         metrics: [
           { label: 'Speed', value: `${currentSpeed} km/h` },
-          { label: 'Heading', value: `${Math.round(heading)} deg` },
-          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
+          { label: 'Heading', value: `${headingDeg} deg` },
+          { label: 'Covered', value: `${coveredKmText} km` },
         ],
         summary: 'Camera is following the live vehicle.',
         title: 'Direction',
@@ -687,8 +755,8 @@ export default function VehicleTrackerScreen() {
       history: {
         icon: 'history',
         metrics: [
-          { label: 'Covered', value: `${coveredKm.toFixed(1)} km` },
-          { label: 'Trip', value: `${totalDistanceKm.toFixed(1)} km` },
+          { label: 'Covered', value: `${coveredKmText} km` },
+          { label: 'Trip', value: `${totalKmText} km` },
           { label: 'Ping', value: pingTime },
         ],
         summary: 'Opening recorded route history on the playback screen.',
@@ -699,8 +767,10 @@ export default function VehicleTrackerScreen() {
 
     return options[selectedOptionId];
   }, [
+    coordinateLabel,
+    coveredKmText,
     currentSpeed,
-    heading,
+    headingDeg,
     isAlertActive,
     isFollowing,
     isNightMode,
@@ -708,12 +778,10 @@ export default function VehicleTrackerScreen() {
     isTrafficVisible,
     mapProviderLabel,
     pingTime,
-    remainingDistanceKm,
-    coveredKm,
+    remainingKmText,
     selectedOptionId,
     status,
-    totalDistanceKm,
-    vehicleCoordinate,
+    totalKmText,
     vehicleName,
     vehicleSubtitle,
   ]);
@@ -819,6 +887,8 @@ export default function VehicleTrackerScreen() {
     },
     [currentSpeed, isLiveStale, mapPadding, useNativeMap]
   );
+  const moveCameraRef = useRef(moveCamera);
+  moveCameraRef.current = moveCamera;
 
   const showToast = useCallback((message: string) => {
     setToastText(message);
@@ -923,6 +993,13 @@ export default function VehicleTrackerScreen() {
     [sheetTranslateY, snapSheet]
   );
 
+  // Stable identities so the memoised sheet is not re-rendered by a new inline
+  // arrow on every tick of the live position.
+  const toggleSheet = useCallback(() => snapSheet(!sheetExpandedRef.current), [snapSheet]);
+  const expandSheet = useCallback(() => snapSheet(true), [snapSheet]);
+  const toggleTools = useCallback(() => setToolsExpanded((current) => !current), []);
+  const closeOptionPanel = useCallback(() => setSelectedOptionId(null), []);
+
   const handleSheetLayout = useCallback(
     (event: LayoutChangeEvent) => {
       const nextHeight = Math.ceil(event.nativeEvent.layout.height);
@@ -1007,18 +1084,19 @@ export default function VehicleTrackerScreen() {
         fitWholeRouteRef.current();
       } else {
         setIsFollowing(true);
-        moveCamera(
+        const { coordinate, heading: liveHeading } = liveRef.current;
+        moveCameraRef.current(
           mode,
-          vehicleCoordinate.longitude,
-          vehicleCoordinate.latitude,
-          heading,
+          coordinate.longitude,
+          coordinate.latitude,
+          liveHeading,
           620,
           true
         );
       }
       showToast(`${CAMERA_MODES[mode].label} camera`);
     },
-    [heading, haptic, moveCamera, showToast, vehicleCoordinate]
+    [haptic, showToast]
   );
 
   const handleManualMapInteraction = useCallback(() => {
@@ -1040,16 +1118,135 @@ export default function VehicleTrackerScreen() {
       return;
     }
     setIsFollowing(true);
-    moveCamera(
+    const { coordinate, heading: liveHeading } = liveRef.current;
+    moveCameraRef.current(
       cameraMode,
-      vehicleCoordinate.longitude,
-      vehicleCoordinate.latitude,
-      heading,
+      coordinate.longitude,
+      coordinate.latitude,
+      liveHeading,
       680,
       true
     );
     showToast('Cinematic tracking resumed');
-  }, [cameraMode, heading, haptic, moveCamera, showToast, vehicleCoordinate]);
+  }, [cameraMode, haptic, showToast]);
+
+  // ---------------------------------------------------------------------------
+  // Map controls. Every handler has a stable identity so the control rail (and
+  // the memoised bottom sheet) are not re-rendered by the live position ticks.
+  // ---------------------------------------------------------------------------
+
+  const zoomBy = useCallback(
+    async (delta: number) => {
+      const instance = mapRef.current;
+      if (!instance) return;
+      manualInteractionRef.current = true;
+      try {
+        const camera = await instance.getCamera();
+        if (camera.zoom != null) {
+          instance.animateCamera(
+            { zoom: Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, camera.zoom + delta)) },
+            { duration: 260 }
+          );
+          return;
+        }
+        // iOS cameras report altitude rather than zoom; halving/doubling the
+        // altitude is the equivalent of one zoom level.
+        const altitude = camera.altitude ?? 1400;
+        instance.animateCamera(
+          { altitude: Math.min(2_000_000, Math.max(120, delta > 0 ? altitude / 2 : altitude * 2)) },
+          { duration: 260 }
+        );
+      } catch {
+        // Camera reads can reject while the provider is laying out.
+      }
+    },
+    []
+  );
+
+  const resetBearing = useCallback(async () => {
+    const instance = mapRef.current;
+    if (!instance) return;
+    try {
+      const camera = await instance.getCamera();
+      instance.animateCamera({ ...camera, heading: 0 }, { duration: 320 });
+      setMapCameraHeading(0);
+      lastCameraHeadingRef.current = 0;
+      showToast('Facing north');
+    } catch {
+      // Ignore: the camera is mid-animation.
+    }
+  }, [showToast]);
+
+  const toggleUserLocation = useCallback(async () => {
+    haptic();
+    if (showsUserLocation) {
+      setShowsUserLocation(false);
+      showToast('My location hidden');
+      return;
+    }
+    // Android needs an explicit runtime grant; iOS prompts via MapKit once the
+    // usage description is present and `showsUserLocation` is enabled.
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          showToast('Location permission denied');
+          return;
+        }
+      } catch {
+        showToast('Location permission unavailable');
+        return;
+      }
+    }
+    setShowsUserLocation(true);
+    showToast('Showing my location');
+  }, [haptic, showToast, showsUserLocation]);
+
+  const cycleMapType = useCallback(() => {
+    haptic();
+    setMapType((current) => {
+      const next = MAP_TYPE_ORDER[(MAP_TYPE_ORDER.indexOf(current) + 1) % MAP_TYPE_ORDER.length];
+      showToast(MAP_TYPE_LABEL[next]);
+      return next;
+    });
+  }, [haptic, showToast]);
+
+  const toggleTrafficLayer = useCallback(() => {
+    haptic();
+    setShowsTrafficLayer((current) => {
+      showToast(current ? 'Traffic layer off' : 'Traffic layer on');
+      return !current;
+    });
+  }, [haptic, showToast]);
+
+  const toggleFullScreen = useCallback(() => {
+    haptic();
+    setIsFullScreen((current) => {
+      showToast(current ? 'Exited full screen' : 'Full screen map');
+      return !current;
+    });
+  }, [haptic, showToast]);
+
+  /**
+   * react-native-maps has no Street View component, so this hands the current
+   * position to the platform Maps app in panorama mode — the closest thing to
+   * Street View that is actually available here.
+   */
+  const refreshMap = useCallback(() => {
+    haptic();
+    void refetchDevice();
+    void syncNativeProjectionRef.current(true);
+    showToast('Refreshing live data');
+  }, [haptic, refetchDevice, showToast]);
+
+  const openStreetView = useCallback(() => {
+    haptic();
+    const { coordinate } = liveRef.current;
+    const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${coordinate.latitude},${coordinate.longitude}`;
+    Linking.openURL(url).catch(() => showToast('Street View is unavailable on this device'));
+  }, [haptic, showToast]);
 
   const measureOverlay = useCallback(
     (key: keyof typeof overlayHeights, event: LayoutChangeEvent) => {
@@ -1096,11 +1293,12 @@ export default function VehicleTrackerScreen() {
         if (cameraMode === 'overview') {
           fitWholeRouteRef.current();
         } else {
-          moveCamera(
+          const { coordinate, heading: liveHeading } = liveRef.current;
+          moveCameraRef.current(
             cameraMode,
-            vehicleCoordinate.longitude,
-            vehicleCoordinate.latitude,
-            heading,
+            coordinate.longitude,
+            coordinate.latitude,
+            liveHeading,
             620,
             true
           );
@@ -1108,7 +1306,7 @@ export default function VehicleTrackerScreen() {
         initialRouteFitRef.current = true;
       });
     }
-  }, [cameraMode, heading, moveCamera, scheduleCameraFrame, vehicleCoordinate]);
+  }, [cameraMode, scheduleCameraFrame]);
 
   const syncNativeProjection = useCallback(
     async (force = false) => {
@@ -1153,14 +1351,18 @@ export default function VehicleTrackerScreen() {
     },
     [cameraMode, mapSize.height, mapSize.width, useNativeMap, vehicleCoordinate]
   );
+  // Rebuilt on every fix (it closes over the live coordinate), so map callbacks
+  // go through this ref to keep MapView's props stable.
+  const syncNativeProjectionRef = useRef(syncNativeProjection);
+  syncNativeProjectionRef.current = syncNativeProjection;
 
   const handleRegionChange = useCallback(() => {
-    void syncNativeProjection(false);
-  }, [syncNativeProjection]);
+    void syncNativeProjectionRef.current(false);
+  }, []);
 
   const handleRegionChangeComplete = useCallback(() => {
-    void syncNativeProjection(true);
-  }, [syncNativeProjection]);
+    void syncNativeProjectionRef.current(true);
+  }, []);
 
   const handleWebProjection = useCallback((projection: WebMapProjection) => {
     setMapCameraHeading(normalizeHeading(projection.heading));
@@ -1185,28 +1387,21 @@ export default function VehicleTrackerScreen() {
         if (cameraMode === 'overview') {
           fitWholeRouteRef.current();
         } else {
-          moveCamera(
+          const { coordinate, heading: liveHeading } = liveRef.current;
+          moveCameraRef.current(
             cameraMode,
-            vehicleCoordinate.longitude,
-            vehicleCoordinate.latitude,
-            heading,
+            coordinate.longitude,
+            coordinate.latitude,
+            liveHeading,
             620,
             true
           );
         }
         initialRouteFitRef.current = true;
       }
-      void syncNativeProjection(true);
+      void syncNativeProjectionRef.current(true);
     });
-  }, [
-    blockingMapIssue,
-    cameraMode,
-    heading,
-    moveCamera,
-    scheduleCameraFrame,
-    syncNativeProjection,
-    vehicleCoordinate,
-  ]);
+  }, [blockingMapIssue, cameraMode, scheduleCameraFrame]);
 
   const retryMapLoad = useCallback(() => {
     initialRouteFitRef.current = false;
@@ -1333,10 +1528,20 @@ export default function VehicleTrackerScreen() {
       Math.max(LIVE_TRANSITION_MIN_MS, recordedGapMs * 0.82)
     );
     const startedAt = Date.now();
+    // Publish at ~30fps rather than every frame. Everything downstream is
+    // already slower than that (the camera moves at most every 560ms, the
+    // projection at 25fps, the 3D overlay at ~30fps), and a 60fps setState here
+    // re-rendered the whole screen — which detached and re-attached the bottom
+    // sheet's native-driven transform on every frame, making it flicker.
+    let lastPublishedAt = 0;
     const animate = () => {
-      const fraction = Math.min(1, (Date.now() - startedAt) / duration);
-      const eased = 1 - (1 - fraction) ** 3;
-      setElapsedMs(from + (to - from) * eased);
+      const now = Date.now();
+      const fraction = Math.min(1, (now - startedAt) / duration);
+      if (fraction >= 1 || now - lastPublishedAt >= LIVE_PUBLISH_INTERVAL_MS) {
+        lastPublishedAt = now;
+        const eased = 1 - (1 - fraction) ** 3;
+        setElapsedMs(from + (to - from) * eased);
+      }
       if (fraction < 1) {
         liveTransitionFrameRef.current = requestAnimationFrame(animate);
       } else {
@@ -1543,6 +1748,64 @@ export default function VehicleTrackerScreen() {
 
   const isMapLoading = useNativeMap && (mapLoadState === 'loading' || !mapContainerReady);
 
+  const mapControls = useMemo<MapControl[]>(
+    () => [
+      { icon: 'crosshairs-gps', label: 'Recenter on vehicle', onPress: resumeCinematicTracking },
+      {
+        active: showsUserLocation,
+        icon: 'account-circle-outline',
+        label: 'My location',
+        onPress: () => void toggleUserLocation(),
+      },
+      { icon: 'plus', label: 'Zoom in', onPress: () => void zoomBy(1) },
+      { icon: 'minus', label: 'Zoom out', onPress: () => void zoomBy(-1) },
+      {
+        icon: 'navigation',
+        label: 'Face north',
+        onPress: () => void resetBearing(),
+        // The needle points at true north relative to the current camera.
+        rotation: -mapCameraHeading,
+      },
+      {
+        active: mapType !== 'standard',
+        icon: mapType === 'standard' ? 'layers-outline' : 'satellite-variant',
+        label: `Map type: ${MAP_TYPE_LABEL[mapType]}`,
+        onPress: cycleMapType,
+      },
+      {
+        active: showsTrafficLayer,
+        icon: 'traffic-light',
+        label: 'Traffic layer',
+        onPress: toggleTrafficLayer,
+      },
+      { icon: 'panorama-variant-outline', label: 'Street View', onPress: openStreetView },
+      {
+        active: isFullScreen,
+        icon: isFullScreen ? 'fullscreen-exit' : 'fullscreen',
+        label: isFullScreen ? 'Exit full screen' : 'Full screen',
+        onPress: toggleFullScreen,
+      },
+      { icon: 'refresh', label: 'Refresh map', onPress: refreshMap },
+    ],
+    [
+      cycleMapType,
+      isFullScreen,
+      mapCameraHeading,
+      mapType,
+      openStreetView,
+      refreshMap,
+      resetBearing,
+      resumeCinematicTracking,
+      showsTrafficLayer,
+      showsUserLocation,
+      toggleFullScreen,
+      toggleTrafficLayer,
+      toggleUserLocation,
+      zoomBy,
+    ]
+  );
+  const toggleControls = useCallback(() => setControlsExpanded((current) => !current), []);
+
   // Real device with no usable history AND no live fixes yet: show a loading
   // state while the playback query resolves, then a proper empty state. Never
   // fall back to the demo route for a real device (no fabricated GPS movement in
@@ -1597,6 +1860,7 @@ export default function VehicleTrackerScreen() {
             zoom: 14.8,
           }}
           mapPadding={mapPadding}
+          mapType={mapType}
           onLayout={handleMapLayout}
           onMapReady={handleMapReady}
           onPanDrag={handleManualMapInteraction}
@@ -1607,8 +1871,12 @@ export default function VehicleTrackerScreen() {
           rotateEnabled
           scrollEnabled
           showsBuildings
+          // The in-house rail below owns the compass and my-location controls,
+          // so the provider's own buttons stay off to avoid two of each.
           showsCompass={false}
-          showsUserLocation={false}
+          showsMyLocationButton={false}
+          showsTraffic={showsTrafficLayer}
+          showsUserLocation={showsUserLocation}
           style={styles.mapCanvas}
           toolbarEnabled={false}
           zoomEnabled>
@@ -1694,6 +1962,7 @@ export default function VehicleTrackerScreen() {
         <RouteMapStateOverlay message="Loading native road map" state="loading" />
       ) : null}
 
+      {isFullScreen ? null : (
       <View
         onLayout={(event) => measureOverlay('header', event)}
         style={[styles.headerCard, { top: headerTop }]}>
@@ -1737,8 +2006,9 @@ export default function VehicleTrackerScreen() {
           <Text style={styles.statusPillText}>{status}</Text>
         </View>
       </View>
+      )}
 
-      {liveEnabled && !cinematicMode ? (
+      {liveEnabled && !cinematicMode && !isFullScreen ? (
         <Pressable
           accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
           accessibilityRole="button"
@@ -1771,7 +2041,7 @@ export default function VehicleTrackerScreen() {
         </Pressable>
       ) : null}
 
-      {autoFollowSuspended && !cinematicMode ? (
+      {autoFollowSuspended && !cinematicMode && !isFullScreen ? (
         <Pressable
           accessibilityLabel="Resume Cinematic Tracking"
           accessibilityRole="button"
@@ -1783,7 +2053,7 @@ export default function VehicleTrackerScreen() {
         </Pressable>
       ) : null}
 
-      {cinematicMode ? (
+      {cinematicMode && !isFullScreen ? (
         <View
           onLayout={(event) => measureOverlay('cinema', event)}
           style={[styles.cinemaControlDeck, { top: cinemaDeckTop }]}>
@@ -1844,6 +2114,7 @@ export default function VehicleTrackerScreen() {
       ) : null}
 
       {/* Native-map camera modes stay selected until the user changes mode. */}
+      {isFullScreen ? null : (
       <View
         onLayout={(event) => measureOverlay('camera', event)}
         pointerEvents={cinematicMode ? 'none' : 'box-none'}
@@ -1876,152 +2147,51 @@ export default function VehicleTrackerScreen() {
           );
         })}
       </View>
+      )}
 
-      <Animated.View
+      <MapControlRail
+        bottom={controlRailBottom}
+        controls={mapControls}
+        expanded={controlsExpanded}
+        onToggleExpanded={toggleControls}
+        top={controlRailTop}
+      />
+
+      {isFullScreen ? null : (
+      <LiveDetailsSheet
+        address={currentAddress}
+        alertActive={isAlertActive}
+        carVariant={carVariant}
+        coveredText={`${coveredKmText} km`}
+        expanded={sheetExpanded}
+        following={isFollowing}
+        gpsText={gpsText}
+        ignitionText={ignitionText}
+        modelLoadError={modelLoadError}
+        modelLoading={modelLoadState === 'loading'}
+        nightMode={isNightMode}
+        onClosePanel={closeOptionPanel}
+        onExpand={expandSheet}
+        onFollowLive={jumpToLive}
         onLayout={handleSheetLayout}
-        {...sheetPanResponder.panHandlers}
-        style={[
-          styles.bottomSheet,
-          {
-            paddingBottom: 14,
-            transform: [{ translateY: sheetTranslateY }],
-          },
-        ]}>
-        <Pressable
-          accessibilityLabel={sheetExpanded ? 'Collapse details' : 'Expand details'}
-          accessibilityRole="button"
-          hitSlop={12}
-          onPress={() => snapSheet(!sheetExpandedRef.current)}
-          style={styles.sheetHandleHit}>
-          <View style={styles.sheetHandle} />
-        </Pressable>
-        <View style={styles.sheetHeader}>
-          <View style={styles.deviceAvatar}>
-            <MaterialCommunityIcons color={BRAND.greenGlow} name="car-sports" size={38} />
-          </View>
-          <View style={styles.deviceInfo}>
-            <Text numberOfLines={1} style={styles.deviceName}>
-              {vehicleName}
-            </Text>
-            <Text numberOfLines={2} style={styles.deviceAddress}>
-              {currentAddress}
-            </Text>
-          </View>
-          <View style={styles.speedBlock}>
-            <SmoothSpeed value={currentSpeed} />
-            <Text style={styles.speedLabel}>km/h</Text>
-          </View>
-        </View>
-
-        {/* LIVE screen: no progress bar, playback rate chips, or scrubber. The
-            marker always tracks the newest streamed fix. */}
-
-        {sheetExpanded ? (
-          <Pressable
-            accessibilityLabel={toolsExpanded ? 'Close map tools' : 'Open map tools'}
-            accessibilityRole="button"
-            onPress={() => setToolsExpanded((current) => !current)}
-            style={[styles.toolsToggle, toolsExpanded && styles.toolsToggleActive]}>
-            <View style={styles.toolsToggleLabel}>
-              <MaterialCommunityIcons
-                color={toolsExpanded ? '#07121B' : BRAND.greenGlow}
-                name="tune-variant"
-                size={19}
-              />
-              <Text style={[styles.toolsToggleText, toolsExpanded && styles.toolsToggleTextActive]}>
-                Map tools
-              </Text>
-            </View>
-            <Text style={[styles.toolsToggleHint, toolsExpanded && styles.toolsToggleTextActive]}>
-              {toolsExpanded ? 'Done' : '11 controls'}
-            </Text>
-          </Pressable>
-        ) : null}
-
-        {sheetExpanded && toolsExpanded ? (
-          <MapToolsPanel
-            activeId={selectedOptionId}
-            alertActive={isAlertActive}
-            following={isFollowing}
-            historyVisible={false}
-            nightMode={isNightMode}
-            routeVisible={isTrafficVisible}
-            satelliteMode={isSatelliteMode}
-            onSelect={handleRouteTool}
-          />
-        ) : null}
-
-        {sheetExpanded && !toolsExpanded && selectedOptionData ? (
-          <RouteOptionDataPanel data={selectedOptionData} onClose={() => setSelectedOptionId(null)} />
-        ) : null}
-
-        {sheetExpanded && !toolsExpanded ? (
-          <>
-            <View style={styles.sheetModelPicker}>
-              <VehicleModelPicker
-                compact
-                errorMessage={modelLoadError}
-                loading={modelLoadState === 'loading'}
-                onChange={selectVehicleModel}
-                value={carVariant}
-              />
-            </View>
-            <View style={styles.sheetStats}>
-              <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
-              <Metric icon="map-marker-distance" label="Covered" value={`${coveredKm.toFixed(1)} km`} />
-              <Metric icon="flag-checkered" label="Trip" value={`${totalDistanceKm.toFixed(1)} km`} />
-            </View>
-            <View style={[styles.sheetStats, styles.sheetStatsSecondary]}>
-              <Metric
-                icon="engine-outline"
-                label="Ignition"
-                value={live.latest?.ignition == null ? 'Unknown' : live.latest.ignition ? 'On' : 'Off'}
-              />
-              <Metric
-                icon="access-point"
-                label="GPS"
-                value={live.connected && !isLiveStale ? 'Connected' : isLiveStale ? 'Delayed' : 'Offline'}
-              />
-              <Metric icon="car-info" label="Status" value={status} />
-            </View>
-
-            <View style={styles.sheetActions}>
-              <Pressable
-                accessibilityLabel="Follow live vehicle"
-                accessibilityRole="button"
-                onPress={jumpToLive}
-                style={[styles.primaryAction, styles.primaryActionStopped]}>
-                <MaterialCommunityIcons color="#fff" name="crosshairs-gps" size={25} />
-                <Text style={styles.primaryActionText}>Follow live</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Center vehicle"
-                accessibilityRole="button"
-                onPress={() => handleRouteTool('location')}
-                style={styles.secondaryAction}>
-                <MaterialCommunityIcons color={BRAND.greenGlow} name="crosshairs-gps" size={24} />
-              </Pressable>
-              <Pressable
-                accessibilityLabel="Open route history"
-                accessibilityRole="button"
-                onPress={() => handleRouteTool('history')}
-                style={styles.secondaryAction}>
-                <MaterialCommunityIcons color={BRAND.orange} name="history" size={24} />
-              </Pressable>
-            </View>
-          </>
-        ) : null}
-
-        {!sheetExpanded ? (
-          <Pressable
-            accessibilityLabel="Expand vehicle details"
-            accessibilityRole="button"
-            accessibilityState={{ expanded: false }}
-            onPress={() => snapSheet(true)}
-            style={styles.collapsedSheetTapTarget}
-          />
-        ) : null}
-      </Animated.View>
+        onRouteTool={handleRouteTool}
+        onSelectModel={selectVehicleModel}
+        onToggle={toggleSheet}
+        onToggleTools={toggleTools}
+        panHandlers={sheetPanResponder.panHandlers}
+        pingTime={pingTime}
+        routeVisible={isTrafficVisible}
+        satelliteMode={isSatelliteMode}
+        selectedOptionData={selectedOptionData}
+        selectedOptionId={selectedOptionId}
+        speed={currentSpeed}
+        status={status}
+        toolsExpanded={toolsExpanded}
+        totalText={`${totalKmText} km`}
+        translateY={sheetTranslateY}
+        vehicleName={vehicleName}
+      />
+      )}
 
       {toastText ? (
         <View
@@ -2044,6 +2214,301 @@ export default function VehicleTrackerScreen() {
     </SafeAreaView>
   );
 }
+
+type MapControl = {
+  active?: boolean;
+  danger?: boolean;
+  /** Rotates the icon — used to point the compass needle at true north. */
+  rotation?: number;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  label: string;
+  onPress: () => void;
+};
+
+type MapControlRailProps = {
+  bottom: number;
+  controls: MapControl[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  top: number;
+};
+
+/**
+ * Vertical map-control rail.
+ *
+ * Pinned to the right edge and bounded by the tracking overlays above and the
+ * details sheet below, so it never sits on top of them. It scrolls internally
+ * and collapses to a single button, which keeps every control reachable on
+ * short screens while tracking.
+ */
+const MapControlRail = memo(function MapControlRail({
+  bottom,
+  controls,
+  expanded,
+  onToggleExpanded,
+  top,
+}: MapControlRailProps) {
+  return (
+    <View pointerEvents="box-none" style={[styles.controlRail, { bottom, top }]}>
+      <Pressable
+        accessibilityLabel={expanded ? 'Hide map controls' : 'Show map controls'}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={onToggleExpanded}
+        style={[styles.controlButton, styles.controlToggle]}>
+        <MaterialCommunityIcons
+          color={BRAND.greenGlow}
+          name={expanded ? 'chevron-right' : 'tune-vertical'}
+          size={20}
+        />
+      </Pressable>
+      {expanded ? (
+        <ScrollView
+          contentContainerStyle={styles.controlStack}
+          showsVerticalScrollIndicator={false}
+          style={styles.controlScroll}>
+          {controls.map((control) => (
+            <Pressable
+              accessibilityLabel={control.label}
+              accessibilityRole="button"
+              accessibilityState={{ selected: Boolean(control.active) }}
+              key={control.label}
+              onPress={control.onPress}
+              style={[
+                styles.controlButton,
+                control.active && styles.controlButtonActive,
+                control.danger && styles.controlButtonDanger,
+              ]}>
+              <MaterialCommunityIcons
+                color={control.danger ? BRAND.orange : control.active ? '#07121B' : '#DCE9F4'}
+                name={control.icon}
+                size={20}
+                style={
+                  control.rotation
+                    ? { transform: [{ rotate: `${control.rotation}deg` }] }
+                    : undefined
+                }
+              />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+});
+
+type LiveDetailsSheetProps = {
+  address: string;
+  alertActive: boolean;
+  carVariant: CarVariant;
+  coveredText: string;
+  expanded: boolean;
+  following: boolean;
+  gpsText: string;
+  ignitionText: string;
+  modelLoadError: string | null;
+  modelLoading: boolean;
+  nightMode: boolean;
+  onClosePanel: () => void;
+  onExpand: () => void;
+  onFollowLive: () => void;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onRouteTool: (id: RouteMapOptionId) => void;
+  onSelectModel: (variant: CarVariant) => void;
+  onToggle: () => void;
+  onToggleTools: () => void;
+  panHandlers: PanResponderInstance['panHandlers'];
+  pingTime: string;
+  routeVisible: boolean;
+  satelliteMode: boolean;
+  selectedOptionData: RouteOptionData | null;
+  selectedOptionId: RouteMapOptionId | null;
+  speed: number;
+  status: string;
+  toolsExpanded: boolean;
+  totalText: string;
+  translateY: Animated.Value;
+  vehicleName: string;
+};
+
+/**
+ * The vehicle details sheet.
+ *
+ * Memoised, and deliberately given only display-ready values: the screen around
+ * it re-renders as the live position is interpolated, and re-rendering this
+ * subtree on every one of those ticks detached and re-attached the sheet's
+ * native-driven `translateY`, which is what made it flicker. Nothing passed in
+ * may change per animation frame — quantise it in the parent first.
+ */
+const LiveDetailsSheet = memo(function LiveDetailsSheet({
+  address,
+  alertActive,
+  carVariant,
+  coveredText,
+  expanded,
+  following,
+  gpsText,
+  ignitionText,
+  modelLoadError,
+  modelLoading,
+  nightMode,
+  onClosePanel,
+  onExpand,
+  onFollowLive,
+  onLayout,
+  onRouteTool,
+  onSelectModel,
+  onToggle,
+  onToggleTools,
+  panHandlers,
+  pingTime,
+  routeVisible,
+  satelliteMode,
+  selectedOptionData,
+  selectedOptionId,
+  speed,
+  status,
+  toolsExpanded,
+  totalText,
+  translateY,
+  vehicleName,
+}: LiveDetailsSheetProps) {
+  const sheetStyle = useMemo(
+    () => [styles.bottomSheet, { paddingBottom: 14, transform: [{ translateY }] }],
+    [translateY]
+  );
+
+  return (
+    <Animated.View onLayout={onLayout} {...panHandlers} style={sheetStyle}>
+      <Pressable
+        accessibilityLabel={expanded ? 'Collapse details' : 'Expand details'}
+        accessibilityRole="button"
+        hitSlop={12}
+        onPress={onToggle}
+        style={styles.sheetHandleHit}>
+        <View style={styles.sheetHandle} />
+      </Pressable>
+      <View style={styles.sheetHeader}>
+        <View style={styles.deviceAvatar}>
+          <MaterialCommunityIcons color={BRAND.greenGlow} name="car-sports" size={38} />
+        </View>
+        <View style={styles.deviceInfo}>
+          <Text numberOfLines={1} style={styles.deviceName}>
+            {vehicleName}
+          </Text>
+          <Text numberOfLines={2} style={styles.deviceAddress}>
+            {address}
+          </Text>
+        </View>
+        <View style={styles.speedBlock}>
+          <SmoothSpeed value={speed} />
+          <Text style={styles.speedLabel}>km/h</Text>
+        </View>
+      </View>
+
+      {/* LIVE screen: no progress bar, playback rate chips, or scrubber. The
+          marker always tracks the newest streamed fix. */}
+
+      {expanded ? (
+        <Pressable
+          accessibilityLabel={toolsExpanded ? 'Close map tools' : 'Open map tools'}
+          accessibilityRole="button"
+          onPress={onToggleTools}
+          style={[styles.toolsToggle, toolsExpanded && styles.toolsToggleActive]}>
+          <View style={styles.toolsToggleLabel}>
+            <MaterialCommunityIcons
+              color={toolsExpanded ? '#07121B' : BRAND.greenGlow}
+              name="tune-variant"
+              size={19}
+            />
+            <Text style={[styles.toolsToggleText, toolsExpanded && styles.toolsToggleTextActive]}>
+              Map tools
+            </Text>
+          </View>
+          <Text style={[styles.toolsToggleHint, toolsExpanded && styles.toolsToggleTextActive]}>
+            {toolsExpanded ? 'Done' : '11 controls'}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {expanded && toolsExpanded ? (
+        <MapToolsPanel
+          activeId={selectedOptionId}
+          alertActive={alertActive}
+          following={following}
+          historyVisible={false}
+          nightMode={nightMode}
+          routeVisible={routeVisible}
+          satelliteMode={satelliteMode}
+          onSelect={onRouteTool}
+        />
+      ) : null}
+
+      {expanded && !toolsExpanded && selectedOptionData ? (
+        <RouteOptionDataPanel data={selectedOptionData} onClose={onClosePanel} />
+      ) : null}
+
+      {expanded && !toolsExpanded ? (
+        <>
+          <View style={styles.sheetModelPicker}>
+            <VehicleModelPicker
+              compact
+              errorMessage={modelLoadError}
+              loading={modelLoading}
+              onChange={onSelectModel}
+              value={carVariant}
+            />
+          </View>
+          <View style={styles.sheetStats}>
+            <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
+            <Metric icon="map-marker-distance" label="Covered" value={coveredText} />
+            <Metric icon="flag-checkered" label="Trip" value={totalText} />
+          </View>
+          <View style={[styles.sheetStats, styles.sheetStatsSecondary]}>
+            <Metric icon="engine-outline" label="Ignition" value={ignitionText} />
+            <Metric icon="access-point" label="GPS" value={gpsText} />
+            <Metric icon="car-info" label="Status" value={status} />
+          </View>
+
+          <View style={styles.sheetActions}>
+            <Pressable
+              accessibilityLabel="Follow live vehicle"
+              accessibilityRole="button"
+              onPress={onFollowLive}
+              style={[styles.primaryAction, styles.primaryActionStopped]}>
+              <MaterialCommunityIcons color="#fff" name="crosshairs-gps" size={25} />
+              <Text style={styles.primaryActionText}>Follow live</Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Center vehicle"
+              accessibilityRole="button"
+              onPress={() => onRouteTool('location')}
+              style={styles.secondaryAction}>
+              <MaterialCommunityIcons color={BRAND.greenGlow} name="crosshairs-gps" size={24} />
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Open route history"
+              accessibilityRole="button"
+              onPress={() => onRouteTool('history')}
+              style={styles.secondaryAction}>
+              <MaterialCommunityIcons color={BRAND.orange} name="history" size={24} />
+            </Pressable>
+          </View>
+        </>
+      ) : null}
+
+      {!expanded ? (
+        <Pressable
+          accessibilityLabel="Expand vehicle details"
+          accessibilityRole="button"
+          accessibilityState={{ expanded: false }}
+          onPress={onExpand}
+          style={styles.collapsedSheetTapTarget}
+        />
+      ) : null}
+    </Animated.View>
+  );
+});
 
 function MapToolsPanel({
   activeId,
@@ -2467,6 +2932,36 @@ const styles = StyleSheet.create({
   hiddenControls: {
     opacity: 0,
   },
+  controlRail: {
+    alignItems: 'flex-end',
+    gap: 8,
+    position: 'absolute',
+    right: 12,
+    zIndex: 25,
+  },
+  controlScroll: { flexGrow: 0 },
+  controlStack: { gap: 8, paddingBottom: 2 },
+  controlButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(9, 18, 31, 0.92)',
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 12,
+    borderWidth: 1,
+    elevation: 4,
+    height: 42,
+    justifyContent: 'center',
+    shadowColor: '#020712',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.32,
+    shadowRadius: 8,
+    width: 42,
+  },
+  controlToggle: { backgroundColor: 'rgba(9, 18, 31, 0.96)' },
+  controlButtonActive: {
+    backgroundColor: BRAND.greenGlow,
+    borderColor: BRAND.greenGlow,
+  },
+  controlButtonDanger: { borderColor: 'rgba(255,121,0,0.55)' },
   cinemaControlDeck: {
     backgroundColor: 'rgba(6, 13, 23, 0.88)',
     borderColor: 'rgba(83, 216, 255, 0.22)',

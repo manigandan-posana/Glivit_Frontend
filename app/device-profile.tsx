@@ -50,12 +50,6 @@ export default function DeviceProfileScreen() {
           icon="crosshairs-gps"
           onPress={() => router.push({ pathname: '/live-track', params: { deviceId: String(data.id), name: data.name, subtitle: data.address ?? '' } })}
         />
-        <Button
-          label="Cinematic 3D Playback"
-          icon="movie-open"
-          variant="secondary"
-          onPress={() => router.push({ pathname: '/trip-playback' as never, params: { deviceId: String(data.id), name: data.name } })}
-        />
         <View style={styles.actionRow}>
           <Pressable accessibilityRole="button" disabled={!data.driverPhone} onPress={callDriver} style={styles.iconAction}>
             <MaterialCommunityIcons color={data.driverPhone ? c.primary : c.textMuted} name="phone" size={22} />
