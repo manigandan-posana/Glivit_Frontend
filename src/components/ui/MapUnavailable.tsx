@@ -6,21 +6,16 @@ import { Button } from '@/src/components/ui/Button';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
-/**
- * Shown when the MapLibre native module is not present in the running binary
- * (e.g. Expo Go). Full maps require a development build.
- */
+/** Shown when the native map module cannot be rendered in the current binary. */
 export function MapUnavailable({ onAction, actionLabel }: { onAction?: () => void; actionLabel?: string }) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.container}>
       <MaterialCommunityIcons color={colors.primary} name="map-marker-radius-outline" size={64} />
-      <Text style={styles.title}>Map needs a development build</Text>
+      <Text style={styles.title}>Map unavailable</Text>
       <Text style={styles.message}>
-        Maps use native MapLibre code that is not available in Expo Go. Run a development build to view
-        maps:{'\n'}
-        <Text style={styles.code}>npx expo prebuild</Text> then <Text style={styles.code}>npx expo run:android</Text>
+        Native maps are not available in this runtime. Run the app on Android or iOS to view the map.
       </Text>
       {onAction ? (
         <View style={styles.action}>
@@ -54,6 +49,5 @@ const makeStyles = (c: ThemeColors) =>
       marginTop: spacing.sm,
       textAlign: 'center',
     },
-    code: { color: c.textPrimary, fontWeight: '700' },
     action: { marginTop: spacing.lg, width: 200 },
   });

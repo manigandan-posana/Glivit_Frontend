@@ -9,7 +9,12 @@ import { Provider } from 'react-redux';
 
 import { authStorage } from '@/src/services/authStorage';
 import { hydrate } from '@/src/store/authSlice';
-import { useAppDispatch } from '@/src/store/hooks';
+import {
+  useAppDispatch,
+  useAuth,
+  useHasTenant,
+  useIsAuthenticated,
+} from '@/src/store/hooks';
 import { store } from '@/src/store/store';
 import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
 
@@ -34,6 +39,10 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
         if (active) {
           dispatch(hydrate(persisted));
         }
+      } catch {
+        if (active) {
+          dispatch(hydrate({}));
+        }
       } finally {
         await SplashScreen.hideAsync().catch(() => undefined);
       }
@@ -46,6 +55,32 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RootNavigator() {
+  const { bootstrapped } = useAuth();
+  const hasTenant = useHasTenant();
+  const authenticated = useIsAuthenticated();
+
+  if (!bootstrapped) return null;
+
+  return (
+    <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+      <Stack.Screen name="index" />
+      <Stack.Protected guard={!hasTenant}>
+        <Stack.Screen name="company-code" />
+      </Stack.Protected>
+      <Stack.Protected guard={hasTenant && !authenticated}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+      <Stack.Protected guard={authenticated}>
+        <Stack.Screen name="device-profile" />
+        <Stack.Screen name="live-track" />
+        <Stack.Screen name="trip-playback" />
+        <Stack.Screen name="(app)" />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
 export default function RootLayout() {
   return (
     <Provider store={store}>
@@ -53,15 +88,7 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <ThemeProvider>
             <Bootstrapper>
-              <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-                <Stack.Screen name="index" />
-                <Stack.Screen name="company-code" />
-                <Stack.Screen name="login" />
-                <Stack.Screen name="device-profile" />
-                <Stack.Screen name="live-track" />
-                <Stack.Screen name="trip-playback" />
-                <Stack.Screen name="(app)" />
-              </Stack>
+              <RootNavigator />
             </Bootstrapper>
             <ThemedStatusBar />
           </ThemeProvider>

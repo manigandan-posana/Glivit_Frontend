@@ -4,6 +4,19 @@
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
   },
+  "gradle.autoDetect": "off",
+  "gradle.nestedProjects": false,
+  "java.import.exclusions": [
+    "**/node_modules/**",
+    "**/.expo/**",
+    "**/dist/**"
+  ],
+  "java.project.resourceFilters": [
+    "node_modules",
+    "\\.git",
+    "\\.expo",
+    "dist"
+  ],
   "workbench.colorCustomizations": {
     "activityBar.activeBackground": "#ffff33",
     "activityBar.background": "#ffff33",

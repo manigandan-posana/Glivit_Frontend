@@ -1,5 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
 
+import {
+  hasValidTenantSelection,
+  hasValidTenantSession,
+  normalizeCompanyCode,
+} from '@/src/services/tenantIdentity';
 import type { AuthUser, TenantConfig } from '@/src/types/api';
 
 /**
@@ -10,6 +15,7 @@ import type { AuthUser, TenantConfig } from '@/src/types/api';
 const KEYS = {
   accessToken: 'glivt.accessToken',
   refreshToken: 'glivt.refreshToken',
+  sessionCompanyCode: 'glivt.sessionCompanyCode',
   user: 'glivt.user',
   companyCode: 'glivt.companyCode',
   tenantConfig: 'glivt.tenantConfig',
@@ -18,6 +24,7 @@ const KEYS = {
 export type PersistedAuth = {
   accessToken: string | null;
   refreshToken: string | null;
+  sessionCompanyCode: string | null;
   user: AuthUser | null;
   companyCode: string | null;
   tenantConfig: TenantConfig | null;
@@ -31,50 +38,140 @@ async function setOrDelete(key: string, value: string | null) {
   }
 }
 
-export const authStorage = {
-  async saveTokens(accessToken: string, refreshToken: string) {
-    await SecureStore.setItemAsync(KEYS.accessToken, accessToken);
-    await SecureStore.setItemAsync(KEYS.refreshToken, refreshToken);
-  },
+let mutationQueue: Promise<void> = Promise.resolve();
 
-  async saveUser(user: AuthUser) {
-    await SecureStore.setItemAsync(KEYS.user, JSON.stringify(user));
+function mutate(task: () => Promise<void>): Promise<void> {
+  const next = mutationQueue.catch(() => undefined).then(task);
+  mutationQueue = next.catch(() => undefined);
+  return next;
+}
+
+async function clearSessionKeys() {
+  await Promise.all([
+    setOrDelete(KEYS.accessToken, null),
+    setOrDelete(KEYS.refreshToken, null),
+    setOrDelete(KEYS.sessionCompanyCode, null),
+    setOrDelete(KEYS.user, null),
+  ]);
+}
+
+export const authStorage = {
+  async saveSession({
+    accessToken,
+    companyCode,
+    refreshToken,
+    user,
+  }: {
+    accessToken: string;
+    companyCode: string;
+    refreshToken: string;
+    user: AuthUser;
+  }) {
+    const normalizedCode = normalizeCompanyCode(companyCode);
+    if (
+      !normalizedCode ||
+      !accessToken ||
+      !refreshToken ||
+      !Number.isSafeInteger(user.tenantId) ||
+      user.tenantId <= 0
+    ) {
+      throw new Error('Invalid tenant session');
+    }
+    await mutate(async () => {
+      // The company binding is the commit marker. An interrupted write cannot
+      // turn partially saved credentials into a valid tenant session.
+      await setOrDelete(KEYS.sessionCompanyCode, null);
+      try {
+        await Promise.all([
+          SecureStore.setItemAsync(KEYS.accessToken, accessToken),
+          SecureStore.setItemAsync(KEYS.refreshToken, refreshToken),
+          SecureStore.setItemAsync(KEYS.user, JSON.stringify(user)),
+        ]);
+        await SecureStore.setItemAsync(KEYS.sessionCompanyCode, normalizedCode);
+      } catch (error) {
+        await clearSessionKeys().catch(() => undefined);
+        throw error;
+      }
+    });
   },
 
   async saveTenant(companyCode: string, tenantConfig: TenantConfig) {
-    await SecureStore.setItemAsync(KEYS.companyCode, companyCode);
-    await SecureStore.setItemAsync(KEYS.tenantConfig, JSON.stringify(tenantConfig));
+    const normalizedCode = normalizeCompanyCode(companyCode);
+    if (
+      !normalizedCode ||
+      !hasValidTenantSelection({ companyCode: normalizedCode, tenantConfig })
+    ) {
+      throw new Error('Invalid tenant configuration');
+    }
+    await mutate(async () => {
+      await SecureStore.setItemAsync(KEYS.companyCode, normalizedCode);
+      await SecureStore.setItemAsync(
+        KEYS.tenantConfig,
+        JSON.stringify({ ...tenantConfig, companyCode: normalizedCode })
+      );
+    });
   },
 
   /** Clears session tokens + user but keeps tenant branding for the next login. */
   async clearSession() {
-    await setOrDelete(KEYS.accessToken, null);
-    await setOrDelete(KEYS.refreshToken, null);
-    await setOrDelete(KEYS.user, null);
+    await mutate(clearSessionKeys);
   },
 
   /** Clears everything including the remembered company code. */
   async clearAll() {
-    await this.clearSession();
-    await setOrDelete(KEYS.companyCode, null);
-    await setOrDelete(KEYS.tenantConfig, null);
+    await mutate(async () => {
+      await clearSessionKeys();
+      await Promise.all([
+        setOrDelete(KEYS.companyCode, null),
+        setOrDelete(KEYS.tenantConfig, null),
+      ]);
+    });
   },
 
   async load(): Promise<PersistedAuth> {
-    const [accessToken, refreshToken, userRaw, companyCode, tenantRaw] = await Promise.all([
-      SecureStore.getItemAsync(KEYS.accessToken),
-      SecureStore.getItemAsync(KEYS.refreshToken),
-      SecureStore.getItemAsync(KEYS.user),
-      SecureStore.getItemAsync(KEYS.companyCode),
-      SecureStore.getItemAsync(KEYS.tenantConfig),
-    ]);
-    return {
+    await mutationQueue.catch(() => undefined);
+    const [accessToken, refreshToken, sessionCompanyCode, userRaw, companyCode, tenantRaw] =
+      await Promise.all([
+        SecureStore.getItemAsync(KEYS.accessToken),
+        SecureStore.getItemAsync(KEYS.refreshToken),
+        SecureStore.getItemAsync(KEYS.sessionCompanyCode),
+        SecureStore.getItemAsync(KEYS.user),
+        SecureStore.getItemAsync(KEYS.companyCode),
+        SecureStore.getItemAsync(KEYS.tenantConfig),
+      ]);
+    const persisted: PersistedAuth = {
       accessToken,
       refreshToken,
+      sessionCompanyCode,
       user: safeParse<AuthUser>(userRaw),
-      companyCode,
+      companyCode: normalizeCompanyCode(companyCode),
       tenantConfig: safeParse<TenantConfig>(tenantRaw),
     };
+
+    if (!hasValidTenantSelection(persisted)) {
+      await this.clearAll().catch(() => undefined);
+      return {
+        accessToken: null,
+        refreshToken: null,
+        sessionCompanyCode: null,
+        user: null,
+        companyCode: null,
+        tenantConfig: null,
+      };
+    }
+
+    persisted.tenantConfig = {
+      ...persisted.tenantConfig!,
+      companyCode: persisted.companyCode!,
+    };
+    if (!hasValidTenantSession(persisted)) {
+      await this.clearSession().catch(() => undefined);
+      persisted.accessToken = null;
+      persisted.refreshToken = null;
+      persisted.sessionCompanyCode = null;
+      persisted.user = null;
+    }
+    return persisted;
   },
 };
 

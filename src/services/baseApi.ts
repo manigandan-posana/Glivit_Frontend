@@ -1,6 +1,7 @@
 import {
   createApi,
   fetchBaseQuery,
+  type BaseQueryApi,
   type BaseQueryFn,
   type FetchArgs,
   type FetchBaseQueryError,
@@ -9,6 +10,10 @@ import {
 import { env } from '@/src/config/env';
 import { authStorage } from '@/src/services/authStorage';
 import { demoBaseQuery } from '@/src/services/demoData';
+import {
+  hasValidTenantSession,
+  normalizeCompanyCode,
+} from '@/src/services/tenantIdentity';
 import { clearSession, setCredentials, type AuthState } from '@/src/store/authSlice';
 import type { ApiResponse, TokenResponse } from '@/src/types/api';
 
@@ -17,9 +22,9 @@ type StateShape = { auth: AuthState };
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: env.apiBaseUrl,
   prepareHeaders: (headers, { getState }) => {
-    const token = (getState() as StateShape).auth.accessToken;
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
+    const auth = (getState() as StateShape).auth;
+    if (hasValidTenantSession(auth)) {
+      headers.set('Authorization', `Bearer ${auth.accessToken}`);
     }
     return headers;
   },
@@ -30,8 +35,31 @@ function isAuthEndpoint(args: string | FetchArgs): boolean {
   return url.startsWith('/auth/') || url.startsWith('/tenant/');
 }
 
-// Single-flight refresh so concurrent 401s don't spawn parallel refreshes.
-let refreshInFlight: Promise<boolean> | null = null;
+type SessionSnapshot = {
+  companyCode: string;
+  refreshToken: string;
+  tenantId: number;
+};
+
+// One refresh per tenant session; an old tenant can never refresh into a new one.
+const refreshInFlight = new Map<string, Promise<boolean>>();
+
+function sessionMatches(auth: AuthState, snapshot: SessionSnapshot): boolean {
+  return (
+    normalizeCompanyCode(auth.companyCode) === snapshot.companyCode &&
+    normalizeCompanyCode(auth.sessionCompanyCode) === snapshot.companyCode &&
+    auth.refreshToken === snapshot.refreshToken &&
+    auth.user?.tenantId === snapshot.tenantId
+  );
+}
+
+async function clearCurrentSession(api: BaseQueryApi, snapshot?: SessionSnapshot) {
+  const auth = (api.getState() as StateShape).auth;
+  if (snapshot && !sessionMatches(auth, snapshot)) return;
+  api.dispatch(clearSession());
+  api.dispatch(baseApi.util.resetApiState());
+  await authStorage.clearSession().catch(() => undefined);
+}
 
 const baseQueryWithReauth: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
   args,
@@ -41,42 +69,67 @@ const baseQueryWithReauth: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQue
   let result = await rawBaseQuery(args, api, extraOptions);
 
   if (result.error?.status === 401 && !isAuthEndpoint(args)) {
-    const refreshToken = (api.getState() as StateShape).auth.refreshToken;
-    if (!refreshToken) {
-      api.dispatch(clearSession());
+    const auth = (api.getState() as StateShape).auth;
+    if (!hasValidTenantSession(auth)) {
+      await clearCurrentSession(api);
       return result;
     }
+    const snapshot: SessionSnapshot = {
+      companyCode: normalizeCompanyCode(auth.companyCode)!,
+      refreshToken: auth.refreshToken!,
+      tenantId: auth.user!.tenantId,
+    };
+    const refreshKey = `${snapshot.companyCode}:${snapshot.tenantId}:${snapshot.refreshToken}`;
+    let refresh = refreshInFlight.get(refreshKey);
 
-    if (!refreshInFlight) {
-      refreshInFlight = (async () => {
+    if (!refresh) {
+      refresh = (async () => {
         const refreshResult = await rawBaseQuery(
-          { url: '/auth/refresh', method: 'POST', body: { refreshToken } },
+          { url: '/auth/refresh', method: 'POST', body: { refreshToken: snapshot.refreshToken } },
           api,
           extraOptions
         );
         const envelope = refreshResult.data as ApiResponse<TokenResponse> | undefined;
         const tokens = envelope?.data;
-        if (tokens?.accessToken) {
+        if (
+          tokens?.accessToken &&
+          tokens.refreshToken &&
+          tokens.user?.tenantId === snapshot.tenantId &&
+          sessionMatches((api.getState() as StateShape).auth, snapshot)
+        ) {
+          try {
+            await authStorage.saveSession({
+              accessToken: tokens.accessToken,
+              companyCode: snapshot.companyCode,
+              refreshToken: tokens.refreshToken,
+              user: tokens.user,
+            });
+          } catch {
+            await clearCurrentSession(api, snapshot);
+            return false;
+          }
+          if (!sessionMatches((api.getState() as StateShape).auth, snapshot)) {
+            return false;
+          }
           api.dispatch(
             setCredentials({
               accessToken: tokens.accessToken,
+              companyCode: snapshot.companyCode,
               refreshToken: tokens.refreshToken,
               user: tokens.user,
             })
           );
-          await authStorage.saveTokens(tokens.accessToken, tokens.refreshToken);
-          if (tokens.user) await authStorage.saveUser(tokens.user);
           return true;
         }
-        api.dispatch(clearSession());
-        await authStorage.clearSession();
+        await clearCurrentSession(api, snapshot);
         return false;
       })().finally(() => {
-        refreshInFlight = null;
+        refreshInFlight.delete(refreshKey);
       });
+      refreshInFlight.set(refreshKey, refresh);
     }
 
-    const refreshed = await refreshInFlight;
+    const refreshed = await refresh;
     if (refreshed) {
       result = await rawBaseQuery(args, api, extraOptions);
     }
@@ -90,10 +143,20 @@ export function unwrap<T>(response: ApiResponse<T>): T {
   return response.data as T;
 }
 
+const hybridBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
+  args,
+  api,
+  extraOptions
+) => {
+  if (env.demoMode) {
+    return demoBaseQuery(args, api, extraOptions);
+  }
+  return baseQueryWithReauth(args, api, extraOptions);
+};
+
 export const baseApi = createApi({
   reducerPath: 'api',
-  // Demo mode serves canned data offline; otherwise talk to the real backend.
-  baseQuery: env.demoMode ? demoBaseQuery : baseQueryWithReauth,
+  baseQuery: hybridBaseQuery,
   tagTypes: [
     'Audit',
     'Command',

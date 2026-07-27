@@ -1,5 +1,5 @@
 import { baseApi, unwrap } from './baseApi';
-import type { ApiResponse, PageResponse } from '@/src/types/api';
+import type { ApiResponse, GeofenceDto, PageResponse } from '@/src/types/api';
 
 // ---------------------------------------------------------------------------
 // DTOs — these mirror the Spring Boot com.glivt.ai.dto.* records exactly.
@@ -68,6 +68,35 @@ export interface EtaResponseDto {
   confidence: number;
   factors: Record<string, unknown>;
   structuredExplanation: string;
+}
+
+export interface ChatMessageDto {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: string;
+}
+
+export interface EventChatContextDto {
+  source: 'STANDARD' | 'AI';
+  eventId: number;
+  type: string;
+  vehicle: string;
+  deviceId: string;
+  time: string;
+  severity: string;
+  location: string;
+  description: string;
+}
+
+export interface ChatRequestDto {
+  message: string;
+  history?: ChatMessageDto[];
+  eventContext?: EventChatContextDto;
+}
+
+export interface ChatResponseDto {
+  message: string;
+  timestamp: string;
 }
 
 export interface DriverScoreDto {
@@ -159,7 +188,7 @@ export interface AiEventQuery {
 
 export const aiApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
-    getDashboardSummary: builder.query<AiDashboardSummaryDto, void>({
+    getAiDashboardSummary: builder.query<AiDashboardSummaryDto, void>({
       query: () => '/ai/dashboard',
       transformResponse: (response: ApiResponse<AiDashboardSummaryDto>) => unwrap(response),
       providesTags: ['Dashboard'],
@@ -189,6 +218,10 @@ export const aiApi = baseApi.injectEndpoints({
     submitAiFeedback: builder.mutation<void, FeedbackRequestDto>({
       query: (body) => ({ url: '/ai/feedback', method: 'POST', body }),
     }),
+    sendChatMessage: builder.mutation<ChatResponseDto, ChatRequestDto>({
+      query: (body) => ({ url: '/ai/chat', method: 'POST', body }),
+      transformResponse: (response: ApiResponse<ChatResponseDto>) => unwrap(response),
+    }),
     getEtaPrediction: builder.query<EtaResponseDto, EtaRequestDto>({
       query: (body) => ({ url: '/ai/predict/eta', method: 'POST', body }),
       transformResponse: (response: ApiResponse<EtaResponseDto>) => unwrap(response),
@@ -203,8 +236,9 @@ export const aiApi = baseApi.injectEndpoints({
       transformResponse: (response: ApiResponse<GeofenceSuggestionDto[]>) => unwrap(response),
       providesTags: ['Geofence'],
     }),
-    approveGeofenceSuggestion: builder.mutation<void, number>({
+    approveGeofenceSuggestion: builder.mutation<GeofenceDto, number>({
       query: (id) => ({ url: `/ai/geofence/suggestions/${id}/approve`, method: 'POST' }),
+      transformResponse: (response: ApiResponse<GeofenceDto>) => unwrap(response),
       invalidatesTags: ['Geofence'],
     }),
     dismissGeofenceSuggestion: builder.mutation<void, number>({
@@ -230,10 +264,11 @@ export const aiApi = baseApi.injectEndpoints({
 });
 
 export const {
-  useGetDashboardSummaryQuery,
+  useGetAiDashboardSummaryQuery,
   useGetAiEventsQuery,
   useAcknowledgeAiEventMutation,
   useSubmitAiFeedbackMutation,
+  useSendChatMessageMutation,
   useGetEtaPredictionQuery,
   useLazyGetEtaPredictionQuery,
   useGetDriverScoreQuery,

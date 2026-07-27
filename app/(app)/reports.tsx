@@ -1,7 +1,15 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { File, Paths } from 'expo-file-system';
 import React from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { Button } from '@/src/components/ui/Button';
 import { Card } from '@/src/components/ui/Card';
@@ -13,6 +21,10 @@ import {
   useGetReportsQuery,
   useLazyGetReportContentQuery,
 } from '@/src/services/operationsApi';
+import {
+  isFilePickerCancellation,
+  saveReportFile,
+} from '@/src/services/reportFile';
 import type { ReportDto } from '@/src/types/api';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
@@ -25,7 +37,9 @@ export default function ReportsScreen() {
   const [reportType, setReportType] = React.useState('SUMMARY');
   const { data, isLoading, isFetching, isError, error, refetch } = useGetReportsQuery({ size: 50 });
   const [createReport, { isLoading: isCreating }] = useCreateReportMutation();
-  const [getContent, { isFetching: isDownloading }] = useLazyGetReportContentQuery();
+  const [getContent] = useLazyGetReportContentQuery();
+  const downloadingRef = React.useRef<number | null>(null);
+  const [downloadingId, setDownloadingId] = React.useState<number | null>(null);
 
   const create = async () => {
     const to = new Date();
@@ -45,14 +59,28 @@ export default function ReportsScreen() {
   };
 
   const download = async (report: ReportDto) => {
+    if (downloadingRef.current !== null) return;
+    downloadingRef.current = report.id;
+    setDownloadingId(report.id);
     try {
       const payload = await getContent(report.id).unwrap();
-      const fileName = payload.fileName || `report-${report.id}.csv`;
-      const file = new File(Paths.document, fileName);
-      file.write(payload.content);
-      Alert.alert('Report downloaded', fileName);
+      const saved = await saveReportFile(payload, report.id);
+      Alert.alert(
+        'Report saved',
+        `${saved.fileName} was saved in the folder you selected.`
+      );
     } catch (err) {
-      Alert.alert('Download failed', apiErrorMessage(err));
+      if (isFilePickerCancellation(err)) {
+        Alert.alert('Download cancelled', 'No folder was selected.');
+      } else {
+        Alert.alert(
+          'Download failed',
+          apiErrorMessage(err, 'Unable to save the report. Select a writable folder and try again.')
+        );
+      }
+    } finally {
+      downloadingRef.current = null;
+      setDownloadingId(null);
     }
   };
 
@@ -79,31 +107,46 @@ export default function ReportsScreen() {
           </Card>
         }
         ListEmptyComponent={<EmptyView icon="file-chart-outline" title="No reports" message="Generated reports will appear here." />}
-        renderItem={({ item }) => (
-          <View style={styles.reportCard}>
-            <View style={styles.fileIcon}>
-              <MaterialCommunityIcons color={c.info} name="file-delimited-outline" size={24} />
+        renderItem={({ item }) => {
+          const downloading = downloadingId === item.id;
+          const downloadDisabled = item.status !== 'COMPLETED' || downloadingId !== null;
+          return (
+            <View style={styles.reportCard}>
+              <View style={styles.fileIcon}>
+                <MaterialCommunityIcons color={c.info} name="file-delimited-outline" size={24} />
+              </View>
+              <View style={styles.reportBody}>
+                <Text numberOfLines={1} style={styles.reportTitle}>
+                  {format(item.reportType)}
+                </Text>
+                <Text style={styles.meta}>
+                  {item.status} | {item.outputFormat} | {formatBytes(item.fileSize)}
+                </Text>
+                <Text style={styles.meta}>{formatTime(item.createdAt)}</Text>
+              </View>
+              <Pressable
+                accessibilityLabel={`Download ${format(item.reportType)} report`}
+                accessibilityRole="button"
+                accessibilityState={{ busy: downloading, disabled: downloadDisabled }}
+                disabled={downloadDisabled}
+                onPress={() => void download(item)}
+                style={({ pressed }) => [
+                  styles.iconButton,
+                  (pressed || downloadDisabled) && styles.iconButtonMuted,
+                ]}>
+                {downloading ? (
+                  <ActivityIndicator color={c.primary} size="small" />
+                ) : (
+                  <MaterialCommunityIcons
+                    color={item.status === 'COMPLETED' ? c.primary : c.textMuted}
+                    name="download-outline"
+                    size={22}
+                  />
+                )}
+              </Pressable>
             </View>
-            <View style={styles.reportBody}>
-              <Text numberOfLines={1} style={styles.reportTitle}>{format(item.reportType)}</Text>
-              <Text style={styles.meta}>
-                {item.status} | {item.outputFormat} | {formatBytes(item.fileSize)}
-              </Text>
-              <Text style={styles.meta}>{formatTime(item.createdAt)}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              disabled={item.status !== 'COMPLETED' || isDownloading}
-              onPress={() => download(item)}
-              style={styles.iconButton}>
-              <MaterialCommunityIcons
-                color={item.status === 'COMPLETED' ? c.primary : c.textMuted}
-                name={isDownloading ? 'timer-sand' : 'download-outline'}
-                size={22}
-              />
-            </Pressable>
-          </View>
-        )}
+          );
+        }}
       />
     </View>
   );
@@ -149,4 +192,5 @@ const makeStyles = (c: ThemeColors) =>
     reportTitle: { color: c.textPrimary, fontSize: typography.body, fontWeight: '800' },
     meta: { color: c.textSecondary, fontSize: typography.caption, marginTop: 2 },
     iconButton: { alignItems: 'center', height: 40, justifyContent: 'center', width: 40 },
+    iconButtonMuted: { opacity: 0.45 },
   });

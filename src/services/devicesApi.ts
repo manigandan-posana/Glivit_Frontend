@@ -27,6 +27,8 @@ export type DeviceListArgs = {
   size?: number;
 };
 
+export type AllDevicesArgs = Pick<DeviceListArgs, 'search' | 'projectId' | 'groupId'>;
+
 export type DeviceUpsertRequest = {
   name: string;
   imei: string;
@@ -53,6 +55,52 @@ export type DeviceUpsertRequest = {
 
 export const devicesApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    getAllDevices: build.query<DeviceSummary[], AllDevicesArgs | void>({
+      async queryFn(args, _api, _extraOptions, baseQuery) {
+        const filters = args ?? {};
+        const devices = new Map<number, DeviceSummary>();
+        let page = 0;
+        let totalPages = 1;
+
+        while (page < totalPages) {
+          const result = await baseQuery({
+            url: '/devices',
+            params: {
+              ...(filters.search ? { search: filters.search } : {}),
+              ...(filters.projectId != null ? { projectId: filters.projectId } : {}),
+              ...(filters.groupId != null ? { groupId: filters.groupId } : {}),
+              page,
+              size: 100,
+            },
+          });
+          if (result.error) return { error: result.error };
+
+          const envelope = result.data as ApiResponse<PageResponse<DeviceSummary>> | undefined;
+          const payload = envelope?.data;
+          if (!payload || !Array.isArray(payload.content)) {
+            return {
+              error: {
+                status: 'PARSING_ERROR',
+                originalStatus: 200,
+                data: 'Invalid device list response',
+                error: 'Invalid device list response',
+              },
+            };
+          }
+          payload.content.forEach((device) => {
+            if (device && Number.isSafeInteger(device.id)) devices.set(device.id, device);
+          });
+          totalPages = Number.isFinite(payload.totalPages)
+            ? Math.max(1, Math.trunc(payload.totalPages))
+            : page + 1;
+          if (payload.last || payload.content.length === 0) break;
+          page += 1;
+        }
+
+        return { data: Array.from(devices.values()) };
+      },
+      providesTags: ['Device'],
+    }),
     getDevices: build.query<PageResponse<DeviceSummary>, DeviceListArgs>({
       query: ({ search, projectId, groupId, page = 0, size = 20 }) => ({
         url: '/devices',
@@ -119,6 +167,7 @@ export const devicesApi = baseApi.injectEndpoints({
 export const {
   useCreateDeviceMutation,
   useDeleteDeviceMutation,
+  useGetAllDevicesQuery,
   useGetDeviceQuery,
   useGetDevicePlaybackQuery,
   useGetDevicePositionsQuery,

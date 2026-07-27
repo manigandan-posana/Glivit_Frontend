@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -15,11 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { z } from 'zod';
 
 import { Button } from '@/src/components/ui/Button';
+import { GlivtLogo } from '@/src/components/GlivtLogo';
 import { TextField } from '@/src/components/ui/TextField';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { authStorage } from '@/src/services/authStorage';
+import { baseApi } from '@/src/services/baseApi';
 import { useResolveTenantMutation } from '@/src/services/tenantApi';
-import { setTenant } from '@/src/store/authSlice';
+import { clearTenant, setTenant } from '@/src/store/authSlice';
 import { useAppDispatch } from '@/src/store/hooks';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
@@ -50,6 +51,11 @@ export default function CompanyCodeScreen() {
   const onSubmit = handleSubmit(async (values) => {
     try {
       const config = await resolveTenant(values.companyCode).unwrap();
+      // Invalidate the in-memory tenant immediately so an in-flight refresh or
+      // cached query cannot repopulate data from the previous company.
+      dispatch(clearTenant());
+      dispatch(baseApi.util.resetApiState());
+      await authStorage.clearAll();
       await authStorage.saveTenant(config.companyCode, config);
       dispatch(setTenant({ companyCode: config.companyCode, tenantConfig: config }));
       router.replace('/login');
@@ -68,8 +74,8 @@ export default function CompanyCodeScreen() {
           { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xl },
         ]}
         keyboardShouldPersistTaps="handled">
-        <View style={styles.logoCircle}>
-          <MaterialCommunityIcons color="#FFFFFF" name="crosshairs-gps" size={48} />
+        <View style={{ marginBottom: spacing.lg }}>
+          <GlivtLogo size={72} />
         </View>
         <Text style={styles.title}>Enter Company Code</Text>
         <Text style={styles.subtitle}>
@@ -111,17 +117,6 @@ const makeStyles = (c: ThemeColors) =>
       flexGrow: 1,
       justifyContent: 'center',
       paddingHorizontal: spacing.xxl,
-    },
-    logoCircle: {
-      alignItems: 'center',
-      backgroundColor: 'rgba(255,255,255,0.16)',
-      borderColor: 'rgba(255,255,255,0.22)',
-      borderRadius: 999,
-      borderWidth: 1,
-      height: 100,
-      justifyContent: 'center',
-      marginBottom: spacing.lg,
-      width: 100,
     },
     title: {
       color: '#FFFFFF',

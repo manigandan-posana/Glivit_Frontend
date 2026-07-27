@@ -12,7 +12,8 @@ import { P } from '@/src/constants/permissions';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { authStorage } from '@/src/services/authStorage';
 import { useLogoutMutation } from '@/src/services/authApi';
-import { clearSession } from '@/src/store/authSlice';
+import { baseApi } from '@/src/services/baseApi';
+import { clearSession, clearTenant } from '@/src/store/authSlice';
 import { useAppDispatch, useAppSelector, useHasPermission } from '@/src/store/hooks';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
@@ -21,13 +22,9 @@ type DrawerLink = {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   route:
-    | '/dashboard'
-    | '/ai-center'
     | '/vehicles'
     | '/map'
-    | '/events'
     | '/drivers'
-    | '/maintenance'
     | '/geofences'
     | '/reports'
     | '/commands'
@@ -37,14 +34,13 @@ type DrawerLink = {
   module?: string;
 };
 
+// The All Vehicles Map is the app home. Live fleet tracking, events, maintenance
+// alerts and the AI Command Centre are surfaced there (map + notification bell),
+// so they no longer need their own drawer destinations.
 const LINKS: DrawerLink[] = [
-  { label: 'Home', icon: 'view-dashboard-outline', route: '/dashboard' },
-  { label: 'AI Command Centre', icon: 'brain', route: '/ai-center', permission: P.VIEW_LIVE_LOCATION },
+  { label: 'Live Map (Home)', icon: 'map-marker-radius-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
   { label: 'All Vehicles', icon: 'car-multiple', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
-  { label: 'All Vehicles Map', icon: 'map-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
-  { label: 'Events', icon: 'bell-alert-outline', route: '/events', permission: P.VIEW_LIVE_LOCATION },
   { label: 'Drivers', icon: 'card-account-details-outline', route: '/drivers', permission: P.VIEW_LIVE_LOCATION },
-  { label: 'Maintenance', icon: 'wrench-outline', route: '/maintenance', permission: P.VIEW_LIVE_LOCATION },
   { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
   { label: 'All Vehicles Report', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
   { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },
@@ -58,6 +54,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
   const { colors: c } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
   const tenant = useAppSelector((s) => s.auth.tenantConfig);
+  const companyCode = useAppSelector((s) => s.auth.companyCode);
   const user = useAppSelector((s) => s.auth.user);
   const [logout] = useLogoutMutation();
 
@@ -93,12 +90,33 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
           } catch {
             // Best-effort; clear the local session regardless.
           }
-          await authStorage.clearSession();
           dispatch(clearSession());
+          dispatch(baseApi.util.resetApiState());
+          await authStorage.clearSession().catch(() => undefined);
           router.replace('/login');
         },
       },
     ]);
+  };
+
+  const onSwitchCompany = () => {
+    Alert.alert(
+      'Switch Company',
+      'You will be signed out before selecting another company.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Switch',
+          style: 'destructive',
+          onPress: async () => {
+            dispatch(clearTenant());
+            dispatch(baseApi.util.resetApiState());
+            await authStorage.clearAll().catch(() => undefined);
+            router.replace('/company-code');
+          },
+        },
+      ]
+    );
   };
 
   const contactProvider = () => {
@@ -122,7 +140,10 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
           {tenant?.appName ?? 'Glivt'}
         </Text>
         <Text numberOfLines={1} style={styles.userName}>
-          {user?.name ?? user?.username ?? ''} · {formatRole(user?.role)}
+          {user?.name ?? user?.username ?? ''} | {formatRole(user?.role)}
+        </Text>
+        <Text numberOfLines={1} style={styles.companyCode}>
+          Company: {companyCode ?? '-'}
         </Text>
       </View>
 
@@ -135,6 +156,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
           <DrawerRow key={link.route} icon={link.icon} label={link.label} onPress={() => go(link.route)} />
         ))}
         <View style={styles.divider} />
+        <DrawerRow icon="office-building-cog-outline" label="Switch Company" onPress={onSwitchCompany} />
         <DrawerRow icon="headset" label="Contact Service Provider" onPress={contactProvider} />
       </DrawerContentScrollView>
 
@@ -196,6 +218,12 @@ const makeStyles = (c: ThemeColors) =>
     logoImage: { height: 56, width: 56 },
     tenantName: { color: '#FFFFFF', fontSize: typography.title, fontWeight: '800', marginTop: spacing.sm },
     userName: { color: 'rgba(255,255,255,0.9)', fontSize: typography.caption, marginTop: 2 },
+    companyCode: {
+      color: 'rgba(255,255,255,0.72)',
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: 4,
+    },
     items: { paddingTop: spacing.sm },
     row: {
       alignItems: 'center',

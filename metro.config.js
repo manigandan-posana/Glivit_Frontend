@@ -9,4 +9,8 @@ if (!config.resolver.assetExts.includes('fbx')) {
   config.resolver.assetExts.push('fbx');
 }
 
+if (!config.resolver.assetExts.includes('glb')) {
+  config.resolver.assetExts.push('glb');
+}
+
 module.exports = config;

@@ -1,6 +1,7 @@
 import type { BaseQueryFn, FetchArgs, FetchBaseQueryError } from '@reduxjs/toolkit/query/react';
 
 import { P } from '@/src/constants/permissions';
+import { DEMO_ROAD_PATH } from '@/src/services/demoRoute';
 import type {
   ApiResponse,
   AuthUser,
@@ -47,7 +48,10 @@ import type {
 const DEMO_TENANT: TenantConfig = {
   companyCode: 'DEMO',
   name: 'Glivt Demo Fleet',
-  appName: 'Glivt Demo',
+  appName: 'Glivt',
+  // Local asset path — used by Image component with require() in login/splash.
+  // When fetched via the demo base-query this stays null; the asset is wired
+  // directly in the screens via the shared GlivtLogo component.
   logoUrl: null,
   splashImageUrl: null,
   primaryColor: '#27D34D',
@@ -110,6 +114,38 @@ const DEMO_DEVICES: DeviceDetail[] = [
   makeDevice(4, 'TN09XY4321', 'BIKE', 'NO_DATA', 13.0102, 77.559, 0, 'Hebbal, Bengaluru'),
   makeDevice(5, 'KA53MX2200', 'MIXER_TRUCK', 'INACTIVE', 12.9081, 77.6476, 0, 'HSR Layout, Bengaluru'),
   makeDevice(6, 'KA02CJ7788', 'HEAVY_MACHINERY', 'EXPIRED', 12.9986, 77.5966, 0, 'Malleshwaram, Bengaluru'),
+  makeDevice(
+    7,
+    'KA03GL2026',
+    'SUV',
+    'RUNNING',
+    DEMO_ROAD_PATH[12][1],
+    DEMO_ROAD_PATH[12][0],
+    38,
+    'Museum Road, Bengaluru',
+    bearingDeg(
+      DEMO_ROAD_PATH[12][1],
+      DEMO_ROAD_PATH[12][0],
+      DEMO_ROAD_PATH[13][1],
+      DEMO_ROAD_PATH[13][0]
+    )
+  ),
+  makeDevice(
+    8,
+    'KA04EV8080',
+    'CAR',
+    'RUNNING',
+    DEMO_ROAD_PATH[31][1],
+    DEMO_ROAD_PATH[31][0],
+    44,
+    'Ulsoor Road, Bengaluru',
+    bearingDeg(
+      DEMO_ROAD_PATH[31][1],
+      DEMO_ROAD_PATH[31][0],
+      DEMO_ROAD_PATH[32][1],
+      DEMO_ROAD_PATH[32][0]
+    )
+  ),
 ];
 
 const DEMO_PROJECTS: ProjectDto[] = [
@@ -225,7 +261,8 @@ function makeDevice(
   latitude: number,
   longitude: number,
   speed: number,
-  address: string
+  address: string,
+  course = 90
 ): DeviceDetail {
   return {
     id,
@@ -237,11 +274,11 @@ function makeDevice(
     latitude,
     longitude,
     speed,
-    course: 90,
+    course,
     ignition: state === 'RUNNING' || state === 'IDLE',
     gpsValid: state !== 'NO_DATA',
     address,
-    lastUpdate: new Date(NOW - id * 60_000).toISOString(),
+    lastUpdate: new Date(NOW - (state === 'RUNNING' ? id * 10_000 : id * 60_000)).toISOString(),
     expiryDate: state === 'EXPIRED' ? '2025-01-01' : '2026-12-31',
     status: state === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE',
     model: 'DEMO-GT06',
@@ -341,30 +378,6 @@ function notFound(message: string): { error: FetchBaseQueryError } {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// A compact Bengaluru loop used to synthesize timestamped history and positions.
-const DEMO_PATH: [number, number][] = [
-  [77.594634, 12.971873],
-  [77.59475, 12.973084],
-  [77.596943, 12.97502],
-  [77.599195, 12.976672],
-  [77.601809, 12.976843],
-  [77.603454, 12.978999],
-  [77.606737, 12.977919],
-  [77.608755, 12.977055],
-  [77.611112, 12.974442],
-  [77.610576, 12.971895],
-  [77.611784, 12.969826],
-  [77.612712, 12.972735],
-  [77.612127, 12.974084],
-  [77.608919, 12.974849],
-  [77.608556, 12.976775],
-  [77.609666, 12.97991],
-  [77.610971, 12.980775],
-  [77.612275, 12.982204],
-  [77.61431, 12.982561],
-  [77.615667, 12.982699],
-];
-
 function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const toRad = (v: number) => (v * Math.PI) / 180;
   const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
@@ -385,34 +398,82 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 }
 
 /**
- * Timestamped demo history for a device: points spaced ~90s apart ending "now",
- * with per-segment recorded speed/course so the truthful playback engine and the
- * live features have real fields to render (not fabricated on the client).
+ * Timestamped demo history for a device.
+ *
+ * When `anchorMs` is provided (e.g. the start-of-day for a selected date) the
+ * trip is anchored to that day, so the cinematic date picker shows real data
+ * for whichever date the user selects. Defaults to ending at "now" so the
+ * live-track map always has current-looking history without a date arg.
  */
-function demoTrackPoints(): PlaybackTrackPoint[] {
+function demoTrackPoints(anchorMs?: number): PlaybackTrackPoint[] {
   const points: PlaybackTrackPoint[] = [];
-  const stepMs = 90_000;
-  const startMs = NOW - (DEMO_PATH.length - 1) * stepMs;
-  for (let i = 0; i < DEMO_PATH.length; i += 1) {
-    const [lng, lat] = DEMO_PATH[i];
-    const next = DEMO_PATH[Math.min(i + 1, DEMO_PATH.length - 1)];
-    const segKm = i > 0 ? haversineKm(DEMO_PATH[i - 1][1], DEMO_PATH[i - 1][0], lat, lng) : 0;
-    const speed = i === 0 ? 0 : Math.round((segKm / (stepMs / 3_600_000)) * 10) / 10;
+  const segmentDurations = DEMO_ROAD_PATH.slice(0, -1).map(([lng, lat], index) => {
+    const [nextLng, nextLat] = DEMO_ROAD_PATH[index + 1];
+    const previous = DEMO_ROAD_PATH[Math.max(0, index - 1)];
+    const inBearing = bearingDeg(previous[1], previous[0], lat, lng);
+    const outBearing = bearingDeg(lat, lng, nextLat, nextLng);
+    const turn = Math.abs(((outBearing - inBearing + 540) % 360) - 180);
+    // Urban speeds slow naturally at sharp intersections and vary gradually,
+    // producing physically plausible timestamps rather than fixed 90s jumps.
+    const cruiseKph = Math.max(17, 39 + Math.sin(index * 0.58) * 8 - turn * 0.17);
+    const distanceKm = haversineKm(lat, lng, nextLat, nextLng);
+    return Math.max(1_200, (distanceKm / cruiseKph) * 3_600_000);
+  });
+  const totalDurationMs = segmentDurations.reduce((sum, duration) => sum + duration, 0);
+  // Default: trip ends ~1 min ago so the last point is "recent".
+  const endMs = anchorMs != null ? anchorMs + 8 * 60 * 60_000 : NOW - 60_000;
+  const startMs = endMs - totalDurationMs;
+  let elapsedMs = 0;
+  for (let i = 0; i < DEMO_ROAD_PATH.length; i += 1) {
+    const [lng, lat] = DEMO_ROAD_PATH[i];
+    const next = DEMO_ROAD_PATH[Math.min(i + 1, DEMO_ROAD_PATH.length - 1)];
+    const previousDuration = segmentDurations[Math.max(0, i - 1)] ?? 1;
+    const previous = DEMO_ROAD_PATH[Math.max(0, i - 1)];
+    const segmentKm =
+      i > 0 ? haversineKm(previous[1], previous[0], lat, lng) : 0;
+    const speed =
+      i === 0 || i === DEMO_ROAD_PATH.length - 1
+        ? 0
+        : Math.round((segmentKm / (previousDuration / 3_600_000)) * 10) / 10;
     points.push({
-      t: new Date(startMs + i * stepMs).toISOString(),
+      t: new Date(startMs + elapsedMs).toISOString(),
       lat,
       lng,
-      speed: Math.min(speed, 68),
+      speed: Math.min(speed, 58),
       course: bearingDeg(lat, lng, next[1], next[0]),
       ignition: true,
       gpsValid: true,
     });
+    elapsedMs += segmentDurations[i] ?? 0;
   }
   return points;
 }
 
-function demoPlayback(deviceId: number): PlaybackResponse {
-  const points = demoTrackPoints();
+/**
+ * Build demo playback anchored to the optional `from` ISO string so the
+ * cinematic date picker (trip-playback.tsx) receives historically-correct
+ * timestamps for the selected calendar date.
+ */
+function demoPlayback(deviceId: number, from?: string): PlaybackResponse {
+  // If a `from` date was requested, anchor the demo trip to start-of that day
+  // in local time (noon UTC avoids any DST edge cases).
+  let anchorMs: number | undefined;
+  if (from) {
+    const d = new Date(from);
+    if (!Number.isNaN(d.getTime())) {
+      // Use noon on the requested date as the anchor so the trip falls neatly
+      // within that calendar day regardless of timezone.
+      anchorMs = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        8, // 8 AM local
+        0,
+        0
+      ).getTime();
+    }
+  }
+  const points = demoTrackPoints(anchorMs);
   let distanceKm = 0;
   for (let i = 1; i < points.length; i += 1) {
     distanceKm += haversineKm(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
@@ -635,7 +696,7 @@ function demoDispatch(): DispatchRecommendResponseDto {
 }
 
 /** Canned baseQuery that serves demo data for the shell endpoints. */
-export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
+const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
   args
 ) => {
   const url = typeof args === 'string' ? args : args.url;
@@ -871,9 +932,11 @@ export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
   }
 
   // Route playback + raw positions (Phase 1 truthful playback in demo mode).
+  // Pass the `from` query param through so date-aware cinematic playback works.
   const playbackMatch = url.match(/^\/devices\/(\d+)\/playback$/);
   if (playbackMatch) {
-    return envelope(demoPlayback(Number(playbackMatch[1])));
+    const fromParam = (params as Record<string, unknown>).from as string | undefined;
+    return envelope(demoPlayback(Number(playbackMatch[1]), fromParam));
   }
   const positionsMatch = url.match(/^\/devices\/(\d+)\/positions$/);
   if (positionsMatch) {
@@ -919,8 +982,33 @@ export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
   if (geofenceSuggestActionMatch) {
     const id = Number(geofenceSuggestActionMatch[1]);
     const found = DEMO_GEOFENCE_SUGGESTIONS.find((s) => s.id === id);
-    if (found) found.status = geofenceSuggestActionMatch[2] === 'approve' ? 'APPROVED' : 'DISMISSED';
+    if (!found) return notFound('Geofence suggestion not found');
+    const action = geofenceSuggestActionMatch[2];
+    if (found.status !== 'PENDING') return notFound('Geofence suggestion has already been processed');
+    found.status = action === 'approve' ? 'APPROVED' : 'DISMISSED';
     audit('AI_GEOFENCE_' + geofenceSuggestActionMatch[2].toUpperCase(), 'GEOFENCE', String(id));
+    if (action === 'approve') {
+      const created: GeofenceDto = {
+        id: Math.max(0, ...DEMO_GEOFENCES.map((geofence) => geofence.id)) + 1,
+        name: found.suggestedName || `Suggested geofence ${found.id}`,
+        description: found.reasoning ?? null,
+        color: '#27D34D',
+        type: 'CIRCLE',
+        coordinates: [[found.centerLongitude, found.centerLatitude]],
+        radiusMeters: found.suggestedRadiusMeters,
+        corridorWidthMeters: null,
+        assignedDeviceIds: [],
+        assignedGroupIds: [],
+        enterAlert: true,
+        exitAlert: true,
+        activeSchedule: null,
+        active: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      DEMO_GEOFENCES.unshift(created);
+      return envelope(created);
+    }
     return envelope(null);
   }
   if (url === '/ai/dispatch/recommend') {
@@ -934,5 +1022,105 @@ export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
     return envelope(demoMaintenance());
   }
 
+  if (url === '/ai/chat') {
+    const body = (args as any)?.body as {
+      message?: string;
+      history?: any[];
+      eventContext?: {
+        eventId?: number;
+        type?: string;
+        vehicle?: string;
+        deviceId?: string;
+        time?: string;
+        severity?: string;
+        location?: string;
+        description?: string;
+      };
+    } | undefined;
+    const msg = (body?.message ?? '').toLowerCase();
+    let reply = '';
+    const event = body?.eventContext;
+    if (event && Number.isSafeInteger(Number(event.eventId))) {
+      const eventId = Number(event.eventId);
+      const type = event.type || 'Unknown event';
+      const vehicle = event.vehicle || 'Unassigned vehicle';
+      const deviceId = event.deviceId || 'Unavailable';
+      const time = event.time || 'Unavailable';
+      const severity = event.severity || 'INFO';
+      const location = event.location || 'Location unavailable';
+      const description = event.description || 'No description was recorded.';
+      if (msg.includes('where') || msg.includes('location')) {
+        reply = `Event #${eventId} was recorded at ${location}.`;
+      } else if (msg.includes('when') || msg.includes('time')) {
+        reply = `Event #${eventId} was recorded at ${time}.`;
+      } else if (msg.includes('vehicle') || msg.includes('device')) {
+        reply = `This event concerns ${vehicle} on device ${deviceId}.`;
+      } else if (
+        msg.includes('severity') ||
+        msg.includes('critical') ||
+        msg.includes('warning') ||
+        msg.includes('why')
+      ) {
+        reply = `The recorded severity is ${severity}. ${description}`;
+      } else if (
+        msg.includes('action') ||
+        msg.includes('what should') ||
+        msg.includes('respond') ||
+        msg.includes('next')
+      ) {
+        reply = `Review ${vehicle} and device ${deviceId}, confirm the event at ${location}, and follow your ${severity} event escalation procedure.`;
+      } else {
+        reply = `**Event #${eventId}:** ${severity} ${type} for ${vehicle}. ${description} Location: ${location}. Time: ${time}.`;
+      }
+    } else if (msg.includes('fleet') || msg.includes('all vehicle')) {
+      reply = '\u{1F4CA} **Fleet Overview (Demo):** 12 active vehicles. 8 running, 2 idle, 1 stopped, 1 offline. Fleet health: 84/100.';
+    } else if (msg.includes('maintenance') || msg.includes('service')) {
+      reply = '\u{1F527} **Maintenance (Demo):** 3 vehicles due for service. KA-01-AB-1234 needs an oil change in 320 km.';
+    } else if (msg.includes('alert') || msg.includes('warning')) {
+      reply = '\u{1F6A8} **Alerts (Demo):** 2 unacknowledged alerts — speeding (120 km/h on NH44) and a geofence breach near Koramangala.';
+    } else if (msg.includes('speed') || msg.includes('overspeed')) {
+      reply = '\u26A1 **Speed (Demo):** 3 overspeed events in 24 hrs. Highest: 138 km/h by TN-09-MN-2023 on NH48.';
+    } else if (msg.includes('driver') || msg.includes('score')) {
+      reply = '\u{1F464} **Driver Score (Demo):** Top: Rajesh Kumar 94/100. Lowest: Pradeep Sharma 61/100 (harsh braking).';
+    } else if (msg.includes('route') || msg.includes('trip')) {
+      reply = '\u{1F5FA}\uFE0F **Routes (Demo):** Today 847 km across 12 vehicles. 2 route deviations detected.';
+    } else if (msg.includes('fuel') || msg.includes('mileage')) {
+      reply = '\u26FD **Fuel (Demo):** Fleet avg: 12.4 km/L. TN-22-XX-7890 uses 18% more than average — check idle time.';
+    } else if (msg.includes('report') || msg.includes('analytics')) {
+      reply = '\u{1F4C8} **Analytics (Demo):** This week — 5,240 km | Avg 48 km/h | Idle 12.3 hrs | Fuel 423 L.';
+    } else if (msg.includes('geofence') || msg.includes('zone')) {
+      reply = '\u{1F4CD} **Geofence (Demo):** 5 active zones. 1 breach today — TN-09-MN-2023 exited City Zone at 14:23.';
+    } else {
+      reply = "\u{1F44B} Hello! I'm your **Glivt AI Fleet Assistant**. Ask me about fleet status, maintenance, alerts, driver scores, routes, fuel, or reports!";
+    }
+    return envelope({ message: reply, timestamp: new Date().toISOString() });
+  }
+
   return notFound(`No demo handler for ${url}`);
+};
+
+/**
+ * Public demo baseQuery. Wraps the handler so a bug in any single demo response
+ * degrades to a clean error for that request instead of crashing the screen.
+ */
+export const demoBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
+  args,
+  api,
+  extraOptions
+) => {
+  try {
+    return await demoBaseQueryImpl(args, api, extraOptions);
+  } catch {
+    const url = typeof args === 'string' ? args : args.url;
+    return {
+      error: {
+        status: 500,
+        data: {
+          success: false,
+          data: null,
+          error: { code: 'DEMO_ERROR', message: `Demo handler failed for ${url}` },
+        },
+      } as FetchBaseQueryError,
+    };
+  }
 };
