@@ -524,12 +524,17 @@ export default function VehicleTrackerScreen() {
   // a command invalidates the device cache.
   const isImmobilised = Boolean(deviceDetail?.immobilised || deviceDetail?.locked);
   const currentSpeed = isImmobilised ? 0 : reportedSpeed;
+  const latestIgnition =
+    live.latest?.ignition ?? sample?.ignition ?? deviceDetail?.ignition ?? null;
+  const isStoppedOff = currentSpeed === 0 && latestIgnition === false;
   const status = isAlertActive
     ? 'Alert'
     : isImmobilised
       ? deviceDetail?.immobilised
         ? 'Engine cut'
         : 'Locked'
+      : isStoppedOff
+        ? 'Stopped'
       : liveEnabled && (!live.connected || isLiveStale)
         ? 'Offline'
         : hasInvalidLiveFix
@@ -558,7 +563,7 @@ export default function VehicleTrackerScreen() {
   if (streamedAddress) lastAddressRef.current = streamedAddress;
   const currentAddress = lastAddressRef.current ?? vehicleSubtitle;
   const ignitionText =
-    live.latest?.ignition == null ? 'Unknown' : live.latest.ignition ? 'On' : 'Off';
+    latestIgnition == null ? 'Unknown' : latestIgnition ? 'On' : 'Off';
   const gpsText = live.connected && !isLiveStale ? 'Connected' : isLiveStale ? 'Delayed' : 'Offline';
   // Ping time reflects the last recorded fix, not wall-clock.
   const pingTime = useMemo(() => {
@@ -1612,6 +1617,10 @@ export default function VehicleTrackerScreen() {
       setElapsedMs(to);
       return;
     }
+    if (isStoppedOff) {
+      setElapsedMs(to);
+      return;
+    }
     const recordedGapMs = to - from;
     const duration = Math.min(
       LIVE_TRANSITION_MAX_MS,
@@ -1645,7 +1654,7 @@ export default function VehicleTrackerScreen() {
         liveTransitionFrameRef.current = null;
       }
     };
-  }, [appActive, isLiveFollowing, track.totalDurationMs]);
+  }, [appActive, isLiveFollowing, isStoppedOff, track.totalDurationMs]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -1722,7 +1731,7 @@ export default function VehicleTrackerScreen() {
             {
               heading: normalizeHeading(heading - mapCameraHeading),
               id: 'vehicle',
-              isActive: true,
+              isActive: !isStoppedOff && currentSpeed > 0,
               selected: true,
               speed: currentSpeed,
               variant: carVariant,
@@ -1735,6 +1744,7 @@ export default function VehicleTrackerScreen() {
       carVariant,
       currentSpeed,
       heading,
+      isStoppedOff,
       mapCameraHeading,
       sample,
       vehicleScreenPoint,

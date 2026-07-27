@@ -17,6 +17,10 @@ export function Marker(_props: StubProps) {
   return null;
 }
 
+export function Circle(_props: StubProps) {
+  return null;
+}
+
 export function Polyline(_props: StubProps) {
   return null;
 }

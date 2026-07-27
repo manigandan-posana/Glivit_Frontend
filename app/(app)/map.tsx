@@ -31,11 +31,6 @@ import { EmptyView } from '@/src/components/ui/StateViews';
 import { useGetAllDevicesQuery, useGetDeviceQuery } from '@/src/services/devicesApi';
 import { useFleetLivePositions } from '@/src/services/fleetLivePositions';
 import { getMapStyleInfo } from '@/src/services/mapStyle';
-import {
-  declutterMarkers,
-  type DeclutterGroup,
-  type ScreenPoint,
-} from '@/src/services/markerDeclutter';
 import { normalizeHeading } from '@/src/services/vehicleMarkerAssets';
 import type { DeviceSummary } from '@/src/types/api';
 import { useTheme } from '@/src/theme/ThemeProvider';
@@ -60,7 +55,14 @@ export default function AllVehiclesMapScreen() {
 
   const { data, isFetching, refetch } = useGetAllDevicesQuery();
 
-  const located = useMemo(() => (data ?? []).filter(hasCoordinate), [data]);
+  const located = useMemo(() => {
+    const unique = new Map<number, LocatedDevice>();
+    for (const device of data ?? []) {
+      if (!hasCoordinate(device) || unique.has(device.id)) continue;
+      unique.set(device.id, device);
+    }
+    return Array.from(unique.values());
+  }, [data]);
   const selected = useMemo(
     () => located.find((device) => device.id === selectedId) ?? null,
     [located, selectedId]
@@ -735,37 +737,15 @@ function NativeFleetMap({
     [projectVehicles, updateZoomFromRegion]
   );
 
-  // Vehicles sitting on top of each other are unreadable, so colliding markers
-  // are fanned out around their shared centre (with a leader line back to the
-  // true position) and crowds too large to fan out collapse into one badge.
-  const groupKeysRef = useRef<Map<string, string>>(new Map());
-  const groups = useMemo(() => {
-    const next = declutterMarkers(
+  const placed = useMemo(
+    () =>
       devices.flatMap((device) => {
         const point = projection.points[String(device.id)];
         if (!point) return [];
-        return [{
-          id: String(device.id),
-          item: device,
-          pinned: selectedId === device.id,
-          point,
-        }];
+        return [{ id: String(device.id), item: device, point }];
       }),
-      { previousGroups: groupKeysRef.current }
-    );
-    const keys = new Map<string, string>();
-    for (const group of next) {
-      for (const member of group.members) keys.set(member.id, group.key);
-    }
-    groupKeysRef.current = keys;
-    return next;
-  }, [devices, projection, selectedId]);
-
-  const placed = useMemo(
-    () => groups.filter((group) => !group.clustered).flatMap((group) => group.members),
-    [groups]
+    [devices, projection.points]
   );
-  const clusters = useMemo(() => groups.filter((group) => group.clustered), [groups]);
 
   const threeMarkers = useMemo<Fleet3DOverlayMarker[]>(
     () =>
@@ -780,53 +760,6 @@ function NativeFleetMap({
         y: point.y,
       })),
     [placed, projection.heading, selectedId]
-  );
-
-  // Zoom the camera onto a cluster so it breaks apart into individual vehicles.
-  const expandCluster = useCallback(
-    async (group: DeclutterGroup<LocatedDevice>) => {
-      const instance = mapRef.current;
-      if (!instance || group.members.length === 0) return;
-      const coordinates = group.members.map(({ item }) => ({
-        latitude: item.latitude,
-        longitude: item.longitude,
-      }));
-      const latitudes = coordinates.map((coordinate) => coordinate.latitude);
-      const longitudes = coordinates.map((coordinate) => coordinate.longitude);
-      const center = {
-        latitude: (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
-        longitude: (Math.min(...longitudes) + Math.max(...longitudes)) / 2,
-      };
-
-      // Fitting a bounding box that is effectively a single point zooms to the
-      // maximum level, so near-identical coordinates get a fixed zoom step in.
-      if (
-        Math.max(...latitudes) - Math.min(...latitudes) > CLUSTER_FIT_MIN_SPAN ||
-        Math.max(...longitudes) - Math.min(...longitudes) > CLUSTER_FIT_MIN_SPAN
-      ) {
-        instance.fitToCoordinates(coordinates, {
-          edgePadding: { top: 180, right: 90, bottom: 260, left: 90 },
-          animated: true,
-        });
-        return;
-      }
-
-      try {
-        const camera = await instance.getCamera();
-        instance.animateCamera(
-          {
-            center,
-            ...(camera.zoom != null
-              ? { zoom: Math.min(19, camera.zoom + 2) }
-              : { altitude: Math.max(150, (camera.altitude ?? 1400) / 3) }),
-          },
-          { duration: 550 }
-        );
-      } catch {
-        // The SDK can reject camera reads during its first layout pass.
-      }
-    },
-    [mapRef]
   );
 
   // Which vehicles get a compact popup. Far zoom -> none (except the selected
@@ -903,15 +836,6 @@ function NativeFleetMap({
       />
 
       {/* Leader lines tying a moved marker back to where it actually is. */}
-      {placed.map((member) =>
-        member.displaced ? (
-          <LeaderLine key={`leader-${member.id}`} anchor={member.anchor} point={member.point} />
-        ) : null
-      )}
-      {clusters.map((group) => (
-        <LeaderLine key={`leader-${group.key}`} anchor={group.anchor} point={group.center} />
-      ))}
-
       {/* Transparent tap targets over each 3D vehicle. No status ring/halo/circle
           is drawn — the 3D model (scaled up slightly when selected by
           Fleet3DOverlay) is the only marker; status is shown in the popup. */}
@@ -950,15 +874,6 @@ function NativeFleetMap({
         );
       })}
 
-      {clusters.map((group) => (
-        <ClusterBadge
-          key={group.key}
-          group={group}
-          onPress={() => void expandCluster(group)}
-          stateColors={stateColors}
-        />
-      ))}
-
       {popups.map(({ device, point, selected }) => (
         <VehiclePopup
           key={`popup-${device.id}`}
@@ -976,10 +891,6 @@ function NativeFleetMap({
   );
 }
 
-const CLUSTER_SIZE = 46;
-/** Degrees of lat/lng span below which a cluster is treated as a single point. */
-const CLUSTER_FIT_MIN_SPAN = 0.0008;
-
 const fleetMapStyles = StyleSheet.create({
   vehicle3DOverlay: {
     alignItems: 'center',
@@ -987,107 +898,7 @@ const fleetMapStyles = StyleSheet.create({
     position: 'absolute',
     zIndex: 10,
   },
-  leaderLine: {
-    backgroundColor: 'rgba(226, 240, 252, 0.55)',
-    height: 1,
-    position: 'absolute',
-    transformOrigin: 'left center',
-    zIndex: 5,
-  },
-  leaderDot: {
-    backgroundColor: 'rgba(226, 240, 252, 0.85)',
-    borderRadius: 3,
-    height: 5,
-    position: 'absolute',
-    width: 5,
-    zIndex: 6,
-  },
-  cluster: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(9, 17, 29, 0.94)',
-    borderRadius: CLUSTER_SIZE / 2,
-    borderWidth: 2,
-    height: CLUSTER_SIZE,
-    justifyContent: 'center',
-    position: 'absolute',
-    width: CLUSTER_SIZE,
-    zIndex: 15,
-  },
-  clusterCount: { color: '#FFFFFF', fontSize: 17, fontWeight: '900' },
-  clusterLabel: {
-    color: '#8BA0B4',
-    fontSize: 7,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    marginTop: -1,
-  },
 });
-
-/** Thin line from a marker's true position to where declutter moved it. */
-function LeaderLine({ anchor, point }: { anchor: ScreenPoint; point: ScreenPoint }) {
-  const dx = point.x - anchor.x;
-  const dy = point.y - anchor.y;
-  const length = Math.hypot(dx, dy);
-  if (length < 4) return null;
-  return (
-    <>
-      <View
-        pointerEvents="none"
-        style={[
-          fleetMapStyles.leaderLine,
-          {
-            left: anchor.x,
-            top: anchor.y,
-            transform: [{ rotate: `${Math.atan2(dy, dx)}rad` }],
-            width: length,
-          },
-        ]}
-      />
-      <View
-        pointerEvents="none"
-        style={[fleetMapStyles.leaderDot, { left: anchor.x - 2.5, top: anchor.y - 2.5 }]}
-      />
-    </>
-  );
-}
-
-/**
- * Stand-in for a crowd too dense to fan out. Tapping it zooms the camera onto
- * the crowd, which splits it back into individually readable vehicles.
- */
-function ClusterBadge({
-  group,
-  onPress,
-  stateColors,
-}: {
-  group: DeclutterGroup<LocatedDevice>;
-  onPress: () => void;
-  stateColors: Record<string, string>;
-}) {
-  const count = group.members.length;
-  const running = group.members.filter(({ item }) => item.state === 'RUNNING').length;
-  const borderColor =
-    running > 0 ? stateColors.RUNNING : stateColors[group.members[0].item.state] ?? stateColors.NO_DATA;
-
-  return (
-    <Pressable
-      accessibilityHint="Zooms in to separate the vehicles"
-      accessibilityLabel={`${count} vehicles here, ${running} running`}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={[
-        fleetMapStyles.cluster,
-        {
-          borderColor,
-          left: group.center.x - CLUSTER_SIZE / 2,
-          top: group.center.y - CLUSTER_SIZE / 2,
-        },
-      ]}>
-      <Text style={fleetMapStyles.clusterCount}>{count}</Text>
-      <Text style={fleetMapStyles.clusterLabel}>HERE</Text>
-    </Pressable>
-  );
-}
 
 // Compact zoom-based vehicle popup (no circles/rings around the model).
 const POPUP_W = 132;

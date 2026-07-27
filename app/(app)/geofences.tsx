@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  PermissionsAndroid,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,7 @@ import { z } from 'zod';
 
 import { Button } from '@/src/components/ui/Button';
 import { Card } from '@/src/components/ui/Card';
+import MapView, { Circle, Marker } from '@/src/components/maps/NativeMap';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { TextField } from '@/src/components/ui/TextField';
 import { apiErrorMessage } from '@/src/services/apiError';
@@ -63,6 +65,23 @@ const DEFAULT_FORM: FormValues = {
   radiusMeters: '250',
 };
 
+const RADIUS_PRESETS = [100, 250, 500, 1000] as const;
+const SEARCH_PLACES = [
+  { name: 'Bengaluru Palace', latitude: 12.9985, longitude: 77.5921 },
+  { name: 'Koramangala', latitude: 12.9352, longitude: 77.6245 },
+  { name: 'Indiranagar', latitude: 12.9784, longitude: 77.6408 },
+  { name: 'MG Road', latitude: 12.9756, longitude: 77.6068 },
+  { name: 'Whitefield', latitude: 12.9698, longitude: 77.7499 },
+  { name: 'Electronic City', latitude: 12.8452, longitude: 77.6602 },
+  { name: 'Manyata Tech Park', latitude: 13.0500, longitude: 77.6200 },
+  { name: 'Kempegowda International Airport', latitude: 13.1986, longitude: 77.7066 },
+] as const;
+
+type Coordinate = {
+  latitude: number;
+  longitude: number;
+};
+
 /**
  * Geofences.
  *
@@ -96,14 +115,60 @@ export default function GeofencesScreen() {
   const [deletingId, setDeletingId] = React.useState<number | null>(null);
   /** `null` = closed, `'new'` = create, otherwise the geofence being edited. */
   const [editorTarget, setEditorTarget] = React.useState<'new' | GeofenceDto | null>(null);
+  const [locationLoading, setLocationLoading] = React.useState(false);
+  const [searchText, setSearchText] = React.useState('');
+  const [saveSuccess, setSaveSuccess] = React.useState(false);
+  const mapRef = React.useRef<MapView>(null);
+  const geofences = React.useMemo(() => (Array.isArray(data?.content) ? data.content : []), [data]);
 
-  const { control, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
+  const {
+    clearErrors,
+    control,
+    handleSubmit,
+    reset,
+    setError,
+    setValue,
+    watch,
+    formState: { errors },
+  } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: DEFAULT_FORM,
   });
+  const watchedLatitude = watch('latitude');
+  const watchedLongitude = watch('longitude');
+  const watchedRadius = watch('radiusMeters');
+  const pickedCoordinate = React.useMemo<Coordinate>(() => {
+    const latitude = Number(watchedLatitude);
+    const longitude = Number(watchedLongitude);
+    return {
+      latitude: Number.isFinite(latitude) ? latitude : Number(DEFAULT_FORM.latitude),
+      longitude: Number.isFinite(longitude) ? longitude : Number(DEFAULT_FORM.longitude),
+    };
+  }, [watchedLatitude, watchedLongitude]);
+  const previewRadius = React.useMemo(() => {
+    const value = Number(watchedRadius);
+    return Number.isFinite(value) && value > 0 ? Math.min(value, 100_000) : Number(DEFAULT_FORM.radiusMeters);
+  }, [watchedRadius]);
+
+  const setPickedCoordinate = React.useCallback(
+    (coordinate: Coordinate, animate = true) => {
+      setValue('latitude', coordinate.latitude.toFixed(6), { shouldDirty: true, shouldValidate: true });
+      setValue('longitude', coordinate.longitude.toFixed(6), { shouldDirty: true, shouldValidate: true });
+      clearErrors(['latitude', 'longitude']);
+      if (animate && Platform.OS !== 'web') {
+        mapRef.current?.animateCamera(
+          { center: coordinate, zoom: 15.5, pitch: 0, heading: 0 },
+          { duration: 360 }
+        );
+      }
+    },
+    [clearErrors, setValue]
+  );
 
   const openCreate = React.useCallback(() => {
     reset(DEFAULT_FORM);
+    setSearchText('');
+    setSaveSuccess(false);
     setEditorTarget('new');
   }, [reset]);
 
@@ -118,12 +183,72 @@ export default function GeofencesScreen() {
           ? String(Math.round(geofence.radiusMeters as number))
           : DEFAULT_FORM.radiusMeters,
       });
+      setSearchText('');
+      setSaveSuccess(false);
       setEditorTarget(geofence);
     },
     [reset]
   );
 
-  const closeEditor = React.useCallback(() => setEditorTarget(null), []);
+  const closeEditor = React.useCallback(() => {
+    setEditorTarget(null);
+    setLocationLoading(false);
+    setSearchText('');
+    setSaveSuccess(false);
+  }, []);
+
+  const locationSuggestions = React.useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return [];
+    const existing = geofences.flatMap((geofence) => {
+      const [longitude, latitude] = geofence.coordinates?.[0] ?? [];
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+      return [{ name: geofence.name, latitude: latitude as number, longitude: longitude as number }];
+    });
+    return [...existing, ...SEARCH_PLACES]
+      .filter((place) => place.name.toLowerCase().includes(query))
+      .slice(0, 5);
+  }, [geofences, searchText]);
+
+  const handleCurrentLocation = React.useCallback(async () => {
+    setLocationLoading(true);
+    try {
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          setError('latitude', { message: 'Location permission was denied.' });
+          return;
+        }
+      }
+      const geolocation = getGeolocation();
+      if (!geolocation) {
+        setError('latitude', { message: 'Current location is unavailable on this device.' });
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        geolocation.getCurrentPosition(
+          (position) => {
+            setPickedCoordinate(
+              {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              },
+              true
+            );
+            resolve();
+          },
+          reject,
+          { enableHighAccuracy: true, maximumAge: 15_000, timeout: 12_000 }
+        );
+      });
+    } catch {
+      setError('latitude', { message: 'Could not read the current GPS location.' });
+    } finally {
+      setLocationLoading(false);
+    }
+  }, [setError, setPickedCoordinate]);
 
   const onApproveSuggestion = async (id: number) => {
     if (approvingId != null || !Number.isSafeInteger(id) || id <= 0) return;
@@ -144,6 +269,16 @@ export default function GeofencesScreen() {
     // Same payload shape as before; editing reuses the record's existing
     // assignments and alert flags so nothing is silently dropped on save.
     const existing = target === 'new' ? null : target;
+    const normalizedName = values.name.trim().toLowerCase();
+    const duplicate = geofences.some(
+      (geofence) =>
+        geofence.id !== existing?.id &&
+        geofence.name.trim().toLowerCase() === normalizedName
+    );
+    if (duplicate) {
+      setError('name', { message: 'A geofence with this name already exists.' });
+      return;
+    }
     const body = {
       name: values.name,
       color: existing?.color || '#0F9D58',
@@ -168,8 +303,12 @@ export default function GeofencesScreen() {
       } else {
         await createGeofence(body).unwrap();
       }
-      setEditorTarget(null);
-      reset(DEFAULT_FORM);
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setEditorTarget(null);
+        setSaveSuccess(false);
+        reset(DEFAULT_FORM);
+      }, 450);
     } catch (err) {
       Alert.alert('Geofence not saved', apiErrorMessage(err));
     }
@@ -208,7 +347,6 @@ export default function GeofencesScreen() {
   const suggestions = Array.isArray(aiSuggestions)
     ? aiSuggestions.filter((suggestion) => suggestion?.status === 'PENDING')
     : [];
-  const geofences = Array.isArray(data.content) ? data.content : [];
   const onRefresh = () => {
     void Promise.allSettled([refetch(), refetchAi()]);
   };
@@ -357,15 +495,114 @@ export default function GeofencesScreen() {
                 {editorTarget && editorTarget !== 'new' ? 'Edit Geofence' : 'Create Circle Geofence'}
               </Text>
               <Text style={styles.subtitle}>
-                Enter the centre point and radius to create an active circular alert zone.
+                Pick a centre point, then tune the radius for the alert zone.
               </Text>
               <Controller
                 control={control}
                 name="name"
                 render={({ field: { onChange, value } }) => (
-                  <TextField error={errors.name?.message} label="Name" onChangeText={onChange} value={value} />
+                  <TextField
+                    autoCapitalize="words"
+                    error={errors.name?.message}
+                    label="Name"
+                    onChangeText={(next) => {
+                      clearErrors('name');
+                      onChange(next);
+                    }}
+                    placeholder="Depot, office, customer site..."
+                    value={value}
+                  />
                 )}
               />
+              <View style={styles.pickerPanel}>
+                <TextField
+                  autoCapitalize="words"
+                  label="Search location"
+                  onChangeText={setSearchText}
+                  placeholder="Search saved zones or Bengaluru places"
+                  value={searchText}
+                />
+                {locationSuggestions.length > 0 ? (
+                  <View style={styles.suggestionList}>
+                    {locationSuggestions.map((place) => (
+                      <Pressable
+                        accessibilityLabel={`Use ${place.name}`}
+                        accessibilityRole="button"
+                        key={`${place.name}-${place.latitude}-${place.longitude}`}
+                        onPress={() => {
+                          setSearchText(place.name);
+                          setPickedCoordinate(place, true);
+                        }}
+                        style={styles.locationSuggestion}>
+                        <MaterialCommunityIcons color={c.primary} name="map-marker-outline" size={17} />
+                        <View style={styles.locationSuggestionText}>
+                          <Text numberOfLines={1} style={styles.locationSuggestionName}>
+                            {place.name}
+                          </Text>
+                          <Text style={styles.locationSuggestionMeta}>
+                            {place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+                <Pressable
+                  accessibilityLabel="Use current location"
+                  accessibilityRole="button"
+                  disabled={locationLoading}
+                  onPress={() => void handleCurrentLocation()}
+                  style={({ pressed }) => [
+                    styles.currentLocationButton,
+                    pressed && styles.currentLocationPressed,
+                    locationLoading && styles.currentLocationDisabled,
+                  ]}>
+                  {locationLoading ? (
+                    <ActivityIndicator color={c.primary} size="small" />
+                  ) : (
+                    <MaterialCommunityIcons color={c.primary} name="crosshairs-gps" size={19} />
+                  )}
+                  <Text style={styles.currentLocationText}>
+                    {locationLoading ? 'Reading GPS...' : 'Use Current Location'}
+                  </Text>
+                </Pressable>
+                {Platform.OS !== 'web' ? (
+                  <MapView
+                    ref={mapRef}
+                    initialCamera={{
+                      center: pickedCoordinate,
+                      heading: 0,
+                      pitch: 0,
+                      zoom: 14.8,
+                    }}
+                    onPress={(event) => setPickedCoordinate(event.nativeEvent.coordinate)}
+                    scrollEnabled
+                    style={styles.pickerMap}
+                    toolbarEnabled={false}
+                    zoomEnabled>
+                    <Circle
+                      center={pickedCoordinate}
+                      fillColor="rgba(39, 211, 77, 0.14)"
+                      radius={previewRadius}
+                      strokeColor={c.primary}
+                      strokeWidth={2}
+                    />
+                    <Marker
+                      coordinate={pickedCoordinate}
+                      draggable
+                      onDragEnd={(event) => setPickedCoordinate(event.nativeEvent.coordinate)}
+                    />
+                  </MapView>
+                ) : (
+                  <View style={styles.webMapFallback}>
+                    <MaterialCommunityIcons color={c.primary} name="map-marker-radius-outline" size={28} />
+                    <Text style={styles.webMapFallbackText}>
+                      Map picker is available on mobile. Search suggestions still fill the coordinates here.
+                    </Text>
+                  </View>
+                )}
+                <Text style={styles.mapHint}>Tap the map or drag the pin. The circle updates as radius changes.</Text>
+              </View>
               <View style={styles.row}>
                 <View style={styles.half}>
                   <Controller
@@ -411,8 +648,40 @@ export default function GeofencesScreen() {
                   />
                 )}
               />
+              <View style={styles.radiusPresetRow}>
+                {RADIUS_PRESETS.map((preset) => {
+                  const active = Math.round(previewRadius) === preset;
+                  const label = preset >= 1000 ? `${preset / 1000}km` : `${preset}m`;
+                  return (
+                    <Pressable
+                      accessibilityLabel={`Set radius ${label}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      key={preset}
+                      onPress={() => setValue('radiusMeters', String(preset), { shouldDirty: true, shouldValidate: true })}
+                      style={[styles.radiusPreset, active && styles.radiusPresetActive]}>
+                      <Text style={[styles.radiusPresetText, active && styles.radiusPresetTextActive]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {saveSuccess ? (
+                <View style={styles.successState}>
+                  <MaterialCommunityIcons color={c.primary} name="check-circle-outline" size={18} />
+                  <Text style={styles.successText}>Geofence saved successfully.</Text>
+                </View>
+              ) : null}
               <Button
-                label={editorTarget && editorTarget !== 'new' ? 'Save changes' : 'Save geofence'}
+                disabled={saveSuccess}
+                label={
+                  saveSuccess
+                    ? 'Saved'
+                    : editorTarget && editorTarget !== 'new'
+                      ? 'Save changes'
+                      : 'Save geofence'
+                }
                 loading={isCreating || isUpdating}
                 onPress={onSubmit}
               />
@@ -525,6 +794,20 @@ function safeText(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+type GeolocationLike = {
+  getCurrentPosition: (
+    success: (position: { coords: { latitude: number; longitude: number } }) => void,
+    error?: (error: unknown) => void,
+    options?: { enableHighAccuracy?: boolean; maximumAge?: number; timeout?: number }
+  ) => void;
+};
+
+function getGeolocation(): GeolocationLike | null {
+  const candidate = (globalThis as { navigator?: { geolocation?: GeolocationLike } }).navigator
+    ?.geolocation;
+  return candidate && typeof candidate.getCurrentPosition === 'function' ? candidate : null;
+}
+
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
     screen: { backgroundColor: c.pageBackground, flex: 1 },
@@ -561,6 +844,99 @@ const makeStyles = (c: ThemeColors) =>
     },
     row: { flexDirection: 'row', gap: spacing.sm },
     half: { flex: 1, minWidth: 0 },
+    pickerPanel: {
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      gap: spacing.sm,
+      padding: spacing.sm,
+    },
+    suggestionList: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden',
+    },
+    locationSuggestion: {
+      alignItems: 'center',
+      borderBottomColor: c.border,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: spacing.sm,
+      minHeight: 48,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 6,
+    },
+    locationSuggestionText: { flex: 1, minWidth: 0 },
+    locationSuggestionName: { color: c.textPrimary, fontSize: typography.caption, fontWeight: '800' },
+    locationSuggestionMeta: { color: c.textMuted, fontSize: 11, marginTop: 1 },
+    currentLocationButton: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      minHeight: 40,
+      paddingHorizontal: spacing.md,
+    },
+    currentLocationPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+    currentLocationDisabled: { opacity: 0.72 },
+    currentLocationText: { color: c.primary, fontSize: typography.caption, fontWeight: '900' },
+    pickerMap: {
+      backgroundColor: c.border,
+      borderRadius: radius.md,
+      height: 210,
+      overflow: 'hidden',
+      width: '100%',
+    },
+    mapHint: { color: c.textMuted, fontSize: 11, lineHeight: 15 },
+    webMapFallback: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: spacing.xs,
+      minHeight: 130,
+      justifyContent: 'center',
+      padding: spacing.md,
+    },
+    webMapFallbackText: {
+      color: c.textSecondary,
+      fontSize: typography.caption,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
+    radiusPresetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: -spacing.xs },
+    radiusPreset: {
+      alignItems: 'center',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      minHeight: 36,
+      minWidth: 74,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+    },
+    radiusPresetActive: { backgroundColor: c.accentSoft, borderColor: c.primary },
+    radiusPresetText: { color: c.textSecondary, fontSize: typography.caption, fontWeight: '900' },
+    radiusPresetTextActive: { color: c.primary },
+    successState: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.sm,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 8,
+    },
+    successText: { color: c.primary, fontSize: typography.caption, fontWeight: '800' },
     geofenceCard: {
       alignItems: 'center',
       backgroundColor: c.surface,
