@@ -361,7 +361,7 @@ function toSummary(d: DeviceDetail): DeviceSummary {
   return {
     id: d.id ?? 1,
     name: d.name ?? 'Vehicle',
-    imei: d.imei ?? '', 
+    imei: d.imei ?? '',
     category: d.category ?? 'CAR',
     vehicleId: d.vehicleId ?? d.id ?? 1,
     vehicleName: d.vehicleName ?? d.name ?? 'Vehicle',
@@ -818,8 +818,8 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
     const search = String((params as Record<string, unknown>).search ?? '').toLowerCase();
     const filtered = search
       ? DEMO_DEVICES.filter(
-          (d) => d.name.toLowerCase().includes(search) || d.imei.toLowerCase().includes(search)
-        )
+        (d) => d.name.toLowerCase().includes(search) || d.imei.toLowerCase().includes(search)
+      )
       : DEMO_DEVICES;
     const page: PageResponse<DeviceSummary> = {
       content: filtered.map(toSummary),

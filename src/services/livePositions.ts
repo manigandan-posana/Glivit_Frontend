@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 
 import { env } from '@/src/config/env';
 import { DEMO_ROAD_PATH } from '@/src/services/demoRoute';
@@ -8,6 +8,7 @@ import {
   isValidGpsPoint,
   normalizeHeading,
 } from '@/src/services/playbackEngine';
+import { getSimulatedVehicle } from './vehicleSimulator';
 import { useAppSelector } from '@/src/store/hooks';
 import type { PlaybackTrackPoint } from '@/src/types/api';
 import { openSse } from './sseClient';
@@ -428,37 +429,36 @@ function startDemoSimulator(
   deviceId: number,
   setState: Dispatch<SetStateAction<LivePositionsState>>
 ): () => void {
-  // Demo history ends at the final route coordinate. Starting the live stream
-  // there prevents an artificial cross-city jump when both datasets merge.
-  let i = DEMO_LIVE_PATH.length - 1;
-  let direction = -1;
   const emit = () => {
-    let nextIndex = i + direction;
-    if (nextIndex < 0 || nextIndex >= DEMO_LIVE_PATH.length) {
-      direction *= -1;
-      nextIndex = i + direction;
-    }
-    const [lng, lat] = DEMO_LIVE_PATH[i];
-    const [nlng, nlat] = DEMO_LIVE_PATH[nextIndex];
+    const defaultLng = DEMO_LIVE_PATH[DEMO_LIVE_PATH.length - 1][0];
+    const defaultLat = DEMO_LIVE_PATH[DEMO_LIVE_PATH.length - 1][1];
+
+    const sim = getSimulatedVehicle(
+      deviceId,
+      defaultLat,
+      defaultLng,
+      0,
+      'RUNNING',
+      true
+    );
+
     const now = new Date().toISOString();
-    const speed = (haversineKm(lat, lng, nlat, nlng) / 1.5) * 3600;
     const event: LivePositionEvent = {
       deviceId,
       vehicleId: deviceId,
-      latitude: lat,
-      longitude: lng,
-      speed: Math.round(Math.min(52, speed) * 10) / 10,
-      course: demoBearing(lat, lng, nlat, nlng),
+      latitude: sim.latitude,
+      longitude: sim.longitude,
+      speed: Math.round(sim.speed * 10) / 10,
+      course: sim.heading,
       ignition: true,
       gpsValid: true,
-      state: 'RUNNING',
+      state: sim.state,
       address: 'Demo live location, Bengaluru',
       deviceTime: now,
       serverTime: now,
       updatedAt: now,
     };
     setState((prev) => applyLiveEvent(prev, event));
-    i = nextIndex;
   };
 
   emit();

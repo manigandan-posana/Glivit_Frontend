@@ -281,7 +281,7 @@ export function NotificationCenter({ tint = '#EAF3FB' }: { tint?: string }) {
 
           <View style={styles.panelBody}>
             {tab === 'ai' ? (
-              <AiCommandCentrePanel />
+              <AiCommandCentrePanel onClose={() => setOpen(false)} />
             ) : (
               <FlatList
                 data={notifications}

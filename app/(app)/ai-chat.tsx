@@ -1,8 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import React, { useRef, useState, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +18,8 @@ import { useSendChatMessageMutation, type ChatMessageDto } from '@/src/services/
 import { formatAiPlainText } from '@/src/services/aiPlainText';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+
+const CONNECTION_ERROR = 'Unable to connect to AI. Please try again.';
 
 function messageTime(timestamp?: string) {
   const parsed = timestamp ? new Date(timestamp) : new Date();
@@ -40,6 +43,24 @@ export default function AiChatScreen() {
   const [input, setInput] = useState('');
   const [sendMessage, { isLoading }] = useSendChatMessageMutation();
   const listRef = useRef<FlatList>(null);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  useEffect(() => {
+    const showEvents = ['keyboardDidShow', 'keyboardWillShow'] as const;
+    const hideEvents = ['keyboardDidHide', 'keyboardWillHide'] as const;
+    const subs = [
+      ...showEvents.map((e) =>
+        Keyboard.addListener(e as any, () => {
+          setKeyboardOpen(true);
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+        })
+      ),
+      ...hideEvents.map((e) =>
+        Keyboard.addListener(e as any, () => setKeyboardOpen(false))
+      ),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isLoading) return;
@@ -102,11 +123,13 @@ export default function AiChatScreen() {
 
   const quickPrompts = ['Fleet status', 'Maintenance', 'Alerts', 'Driver scores', 'Fuel report'];
 
+  const bottomPadding = keyboardOpen ? spacing.md : Math.max(spacing.md, insets.bottom);
+
   return (
     <KeyboardAvoidingView
-      style={[styles.screen, { paddingBottom: insets.bottom }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 50 : 0}>
       <FlatList
         ref={listRef}
         style={styles.messageList}
@@ -141,7 +164,7 @@ export default function AiChatScreen() {
         </View>
       )}
 
-      <View style={styles.inputArea}>
+      <View style={[styles.inputArea, { paddingBottom: bottomPadding }]}>
         <TextInput
           style={styles.input}
           placeholder="Ask AI anything about your fleet..."

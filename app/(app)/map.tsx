@@ -214,8 +214,22 @@ export default function AllVehiclesMapScreen() {
   const openLiveTrack = (item: DeviceSummary) =>
     router.push({ pathname: '/live-track', params: { deviceId: String(item.id), name: item.name, subtitle: item.address ?? '' } });
 
-  const openPlayback = (item: DeviceSummary) =>
-    router.push({ pathname: '/trip-playback' as never, params: { deviceId: String(item.id), name: item.name } });
+  const openPlayback = (item: DeviceSummary) => {
+    const variant = modelForVehicle(item.category, item.id);
+    const model = getVehicleModel(variant);
+    router.push({
+      pathname: '/trip-playback' as never,
+      params: {
+        deviceId: String(item.id),
+        name: item.name,
+        category: item.category ?? '',
+        make: model.label,
+        model: model.id,
+        speed: String(item.speed ?? 0),
+        heading: String(item.course ?? 0),
+      },
+    });
+  };
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.screen}>
@@ -246,7 +260,7 @@ export default function AllVehiclesMapScreen() {
       <View pointerEvents="none" style={styles.mapVignette} />
 
       <View style={[styles.commandBar, { top: insets.top + spacing.sm }]}>
-        <FloatingButton icon="menu" onPress={() => navigation.dispatch(DrawerActions.openDrawer())} />
+        <NotificationCenter tint="#EAF3FB" />
         <View style={styles.commandTitle}>
           <View style={styles.eyebrowRow}>
             <View style={[styles.signalDot, { backgroundColor: connected ? c.primary : c.textMuted }]} />
@@ -254,7 +268,7 @@ export default function AllVehiclesMapScreen() {
           </View>
           <Text style={styles.commandHeading}>All vehicles · {located.length}</Text>
         </View>
-        <NotificationCenter tint="#EAF3FB" />
+        <FloatingButton icon="menu" onPress={() => navigation.dispatch(DrawerActions.openDrawer())} />
       </View>
       <View style={[styles.railRight, { top: insets.top + 92 }]}>
         <FloatingButton icon="refresh" loading={isFetching} onPress={refetch} />
@@ -332,7 +346,6 @@ function VehicleDetailsBottomSheet({
   const snapSheet = useCallback(
     (nextExpanded: boolean) => {
       const offset = collapsedOffset();
-      const wasExpanded = expandedRef.current;
       expandedRef.current = nextExpanded;
       translateY.stopAnimation();
       if (animationFrameRef.current != null) {
@@ -340,34 +353,25 @@ function VehicleDetailsBottomSheet({
         animationFrameRef.current = null;
       }
 
-      if (nextExpanded) {
-        setExpanded(true);
-        animationFrameRef.current = requestAnimationFrame(() => {
-          animationFrameRef.current = null;
-          if (!mountedRef.current) return;
-          if (!wasExpanded) translateY.setValue(offset);
-          Animated.spring(translateY, {
-            damping: 24,
-            mass: 0.84,
-            stiffness: 250,
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        });
-        return;
-      }
+      setExpanded(nextExpanded);
 
-      Animated.spring(translateY, {
-        damping: 25,
-        mass: 0.86,
-        stiffness: 260,
-        toValue: offset,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (!finished || !mountedRef.current) return;
-        setExpanded(false);
-        translateY.setValue(0);
-      });
+      if (nextExpanded) {
+        Animated.spring(translateY, {
+          damping: 24,
+          mass: 0.84,
+          stiffness: 250,
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        Animated.spring(translateY, {
+          damping: 25,
+          mass: 0.86,
+          stiffness: 260,
+          toValue: offset,
+          useNativeDriver: true,
+        }).start();
+      }
     },
     [collapsedOffset, translateY]
   );
@@ -402,7 +406,6 @@ function VehicleDetailsBottomSheet({
   );
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    if (!expandedRef.current) return;
     const height = event.nativeEvent.layout.height;
     if (height > 0) sheetHeightRef.current = height;
   }, []);
@@ -465,7 +468,12 @@ function VehicleDetailsBottomSheet({
         </Text>
       </View>
 
-      {expanded ? (
+      <Animated.View
+        pointerEvents={expanded ? 'auto' : 'none'}
+        style={{
+          opacity: expanded ? 1 : 0,
+        }}
+      >
         <ScrollView
           contentContainerStyle={styles.expandedSheetContent}
           showsVerticalScrollIndicator={false}
@@ -533,7 +541,7 @@ function VehicleDetailsBottomSheet({
             </Pressable>
           </View>
         </ScrollView>
-      ) : null}
+      </Animated.View>
 
       {!expanded ? (
         <Pressable
@@ -638,6 +646,7 @@ function NativeFleetMap({
   const lastProjectionAtRef = useRef(0);
   const [mapReady, setMapReady] = useState(false);
   const [threeReady, setThreeReady] = useState(false);
+  const [threeFailed, setThreeFailed] = useState(false);
   const [projection, setProjection] = useState<{
     heading: number;
     points: Record<string, { x: number; y: number }>;
@@ -724,6 +733,7 @@ function NativeFleetMap({
   const handleThreeUnavailable = useCallback((message: string) => {
     console.warn('[FleetMap] 3D vehicles unavailable; using marker images.', message);
     setThreeReady(false);
+    setThreeFailed(true);
   }, []);
 
   const handleRegionChange = useCallback(
@@ -859,7 +869,7 @@ function NativeFleetMap({
                 width: markerSize,
               },
             ]}>
-            {!threeReady ? (
+            {threeFailed ? (
               <Vehicle3DMarker
                 heading={normalizeHeading(d.course - projection.heading)}
                 isActive={d.state === 'RUNNING'}

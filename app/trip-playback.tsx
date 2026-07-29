@@ -35,6 +35,7 @@ import {
   getVehicleModel,
   Vehicle3DMarker,
   type CarVariant,
+  modelForVehicle,
 } from '@/src/components/Vehicle3DMarker';
 import { VehicleModelPicker } from '@/src/components/VehicleModelPicker';
 import { apiErrorMessage } from '@/src/services/apiError';
@@ -105,13 +106,26 @@ export default function TripPlaybackScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const params = useLocalSearchParams<{ deviceId?: string; name?: string }>();
+  const params = useLocalSearchParams<{
+    deviceId?: string;
+    name?: string;
+    category?: string;
+    make?: string;
+    model?: string;
+    speed?: string;
+    heading?: string;
+  }>();
   const deviceId = Number(params.deviceId);
   const devicePreferenceKey = String(deviceId);
   const dispatch = useAppDispatch();
   const preferredModel = useAppSelector(
     (state) => state.vehiclePreferences.modelByDevice[devicePreferenceKey]
   );
+
+  const initialVariant = useMemo(() => {
+    if (preferredModel) return preferredModel;
+    return modelForVehicle(params.category, params.deviceId ?? '0');
+  }, [preferredModel, params.category, params.deviceId]);
 
   // Date filter — defaults to today. Shifting builds `from` / `to` ISO strings
   // so the backend (and demo) anchor their data to the selected calendar day.
@@ -132,7 +146,7 @@ export default function TripPlaybackScreen() {
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [camera, setCamera] = useState<CameraMode>('cinematic');
   const [cameraCommandId, setCameraCommandId] = useState(0);
-  const [carVariant, setCarVariant] = useState<CarVariant>(preferredModel ?? 'black');
+  const [carVariant, setCarVariant] = useState<CarVariant>(initialVariant);
   const [modelLoadState, setModelLoadState] = useState<'loading' | 'ready' | 'error'>(
     'loading'
   );
@@ -154,12 +168,10 @@ export default function TripPlaybackScreen() {
   }, []);
 
   useEffect(() => {
-    if (preferredModel && preferredModel !== carVariant) {
-      setCarVariant(preferredModel);
-      setModelLoadState('loading');
-      setModelLoadError(null);
-    }
-  }, [carVariant, preferredModel]);
+    setCarVariant(initialVariant);
+    setModelLoadState('loading');
+    setModelLoadError(null);
+  }, [initialVariant]);
 
   const selectVehicleModel = useCallback(
     (variant: CarVariant) => {
@@ -454,6 +466,7 @@ export default function TripPlaybackScreen() {
           loading={modelLoadState === 'loading'}
           value={carVariant}
           onChange={selectVehicleModel}
+          category={params.category}
         />
       </View>
       ) : null}
@@ -669,6 +682,7 @@ function CinematicTripMap({
   const [resumeRequest, setResumeRequest] = useState(0);
   const [mapCameraHeading, setMapCameraHeading] = useState(0);
   const [modelReady, setModelReady] = useState(false);
+  const [modelFailed, setModelFailed] = useState(false);
   const [overlayPoint, setOverlayPoint] = useState<ScreenPoint | null>(null);
   const mapPadding = useMemo(
     () => ({
@@ -769,6 +783,7 @@ function CinematicTripMap({
 
   useEffect(() => {
     setModelReady(false);
+    setModelFailed(false);
     onModelLoadState('loading');
   }, [carVariant, onModelLoadState]);
 
@@ -1060,6 +1075,7 @@ function CinematicTripMap({
             onModelError={(id, variant, message) => {
               if (id !== 'vehicle' || variant !== carVariant) return;
               setModelReady(false);
+              setModelFailed(true);
               onModelLoadState('error', message);
             }}
             onModelLoaded={(id, variant) => {
@@ -1070,15 +1086,17 @@ function CinematicTripMap({
             onModelLoadStart={(id, variant) => {
               if (id !== 'vehicle' || variant !== carVariant) return;
               setModelReady(false);
+              setModelFailed(false);
               onModelLoadState('loading');
             }}
             onUnavailable={(message) => {
               setModelReady(false);
+              setModelFailed(true);
               onModelLoadState('error', message);
             }}
             width={width}
           />
-          {!modelReady ? (
+          {modelFailed ? (
             <View
               pointerEvents="none"
               style={[

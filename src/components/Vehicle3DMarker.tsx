@@ -125,6 +125,27 @@ export function getVehicleModel(variant: CarVariant): VehicleModelOption {
   return VEHICLE_MODELS.find((model) => model.id === variant) ?? VEHICLE_MODELS[0];
 }
 
+export function preloadVehicleModels(): void {
+  for (const variant of VEHICLE_MODEL_IDS) {
+    try {
+      getModelGeometries(variant);
+    } catch {
+      // Ignore preloading error for any specific asset
+    }
+  }
+}
+
+export function getModelCategory(category?: string | null): VehicleModelCategory {
+  const cat = (category ?? '').toUpperCase();
+  if (cat.includes('TRUCK') || cat.includes('MACHINERY') || cat.includes('MIXER')) {
+    return 'truck';
+  }
+  if (cat.includes('BIKE') || cat.includes('MOTOR') || cat.includes('CYCLE')) {
+    return 'bike';
+  }
+  return 'car';
+}
+
 export function modelForVehicle(category: string | null | undefined, vehicleId: string | number) {
   const normalizedCategory = (category ?? '').toUpperCase();
   const numericId = Math.abs(Number(vehicleId) || 0);

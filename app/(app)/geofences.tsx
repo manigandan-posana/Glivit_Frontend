@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import React from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import {
@@ -53,7 +54,7 @@ const schema = z.object({
     .string()
     .trim()
     .regex(/^\d+(\.\d+)?$/, 'Invalid radius')
-    .refine((value) => Number(value) > 0 && Number(value) <= 100_000, 'Radius must be 1–100,000 m'),
+    .refine((value) => Number(value) > 0 && Number(value) <= 100, 'Radius must be between 0.001 and 100 km'),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -62,10 +63,10 @@ const DEFAULT_FORM: FormValues = {
   name: '',
   latitude: '12.9718',
   longitude: '77.5946',
-  radiusMeters: '250',
+  radiusMeters: '0.25',
 };
 
-const RADIUS_PRESETS = [100, 250, 500, 1000] as const;
+const RADIUS_PRESETS = [0.1, 0.25, 0.5, 1, 5] as const;
 const SEARCH_PLACES = [
   { name: 'Bengaluru Palace', latitude: 12.9985, longitude: 77.5921 },
   { name: 'MG Road, Bengaluru', latitude: 12.9756, longitude: 77.6068 },
@@ -157,7 +158,7 @@ export default function GeofencesScreen() {
   }, [watchedLatitude, watchedLongitude]);
   const previewRadius = React.useMemo(() => {
     const value = Number(watchedRadius);
-    return Number.isFinite(value) && value > 0 ? Math.min(value, 100_000) : Number(DEFAULT_FORM.radiusMeters);
+    return Number.isFinite(value) && value > 0 ? Math.min(value * 1000, 100_000) : Number(DEFAULT_FORM.radiusMeters) * 1000;
   }, [watchedRadius]);
 
   const setPickedCoordinate = React.useCallback(
@@ -190,7 +191,7 @@ export default function GeofencesScreen() {
         latitude: Number.isFinite(latitude) ? String(latitude) : DEFAULT_FORM.latitude,
         longitude: Number.isFinite(longitude) ? String(longitude) : DEFAULT_FORM.longitude,
         radiusMeters: Number.isFinite(geofence.radiusMeters)
-          ? String(Math.round(geofence.radiusMeters as number))
+          ? String(Number((geofence.radiusMeters as number) / 1000))
           : DEFAULT_FORM.radiusMeters,
       });
       setSearchText('');
@@ -320,53 +321,79 @@ export default function GeofencesScreen() {
     setLocationLoading(true);
     clearErrors(['latitude', 'longitude']);
     try {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission',
-            message: 'Access is needed to pick your current GPS position for the geofence.',
-            buttonPositive: 'Allow',
-          }
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setError('latitude', { message: 'Location permission was denied. Please grant location access.' });
-          return;
-        }
-      }
-      const geolocation = getGeolocation();
-      if (!geolocation) {
-        setError('latitude', { message: 'Current location service is unavailable on this device.' });
+      // 1. Check if location services (GPS) are enabled
+      const enabled = await Location.hasServicesEnabledAsync();
+      if (!enabled) {
+        setError('latitude', {
+          message: 'Location services (GPS) are disabled. Please turn on location services in your device settings.',
+        });
         return;
       }
 
-      const getPos = (options: PositionOptions) =>
+      // 2. Request permissions
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setError('latitude', {
+          message: 'Location permission was denied. Please grant location access.',
+        });
+        return;
+      }
+
+      // 3. Get current position with timeout wrapper
+      const getPos = () =>
         new Promise<Coordinate>((resolve, reject) => {
-          geolocation.getCurrentPosition(
-            (position) =>
-              resolve({
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-              }),
-            (err) => reject(err),
-            options
-          );
+          let finished = false;
+          const timer = setTimeout(() => {
+            if (!finished) {
+              finished = true;
+              reject(new Error('Location request timed out. Please check your location settings and try again.'));
+            }
+          }, 8000);
+
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          })
+            .then((pos) => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timer);
+                resolve({
+                  latitude: pos.coords.latitude,
+                  longitude: pos.coords.longitude,
+                });
+              }
+            })
+            .catch((err) => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timer);
+                reject(err);
+              }
+            });
         });
 
       let coords: Coordinate;
       try {
-        coords = await getPos({ enableHighAccuracy: true, maximumAge: 10_000, timeout: 8_000 });
-      } catch {
-        // High accuracy timeout or failure — fallback to lower accuracy
-        coords = await getPos({ enableHighAccuracy: false, maximumAge: 30_000, timeout: 10_000 });
+        coords = await getPos();
+      } catch (err: any) {
+        // Fallback to last known position if active retrieval fails
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (lastKnown) {
+          coords = {
+            latitude: lastKnown.coords.latitude,
+            longitude: lastKnown.coords.longitude,
+          };
+        } else {
+          throw err;
+        }
       }
 
       setPickedCoordinate(coords, true);
       setSearchText('Current Location');
     } catch (err: unknown) {
       const msg =
-        err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 1
-          ? 'Location permission was denied.'
+        err instanceof Error
+          ? err.message
           : 'Could not retrieve current GPS position. Please check your location settings.';
       setError('latitude', { message: msg });
     } finally {
@@ -410,7 +437,7 @@ export default function GeofencesScreen() {
       color: existing?.color || '#0F9D58',
       type: 'CIRCLE' as const,
       coordinates: [[Number(values.longitude), Number(values.latitude)]],
-      radiusMeters: Number(values.radiusMeters),
+      radiusMeters: Number(values.radiusMeters) * 1000,
       ...(existing
         ? {
             description: existing.description ?? undefined,
@@ -796,7 +823,7 @@ export default function GeofencesScreen() {
                   <TextField
                     error={errors.radiusMeters?.message}
                     keyboardType="numeric"
-                    label="Radius (meters)"
+                    label="Radius (km)"
                     onChangeText={onChange}
                     value={value}
                   />
@@ -804,8 +831,8 @@ export default function GeofencesScreen() {
               />
               <View style={styles.radiusPresetRow}>
                 {RADIUS_PRESETS.map((preset) => {
-                  const active = Math.round(previewRadius) === preset;
-                  const label = preset >= 1000 ? `${preset / 1000}km` : `${preset}m`;
+                  const active = Number(watchedRadius) === preset;
+                  const label = `${preset} km`;
                   return (
                     <Pressable
                       accessibilityLabel={`Set radius ${label}`}
@@ -901,7 +928,7 @@ function GeofenceRow({
         </Text>
         <Text numberOfLines={1} style={styles.meta}>
           {geofence.type} ·{' '}
-          {geofence.radiusMeters ? `${Math.round(geofence.radiusMeters)} m radius` : 'custom shape'}
+          {geofence.radiusMeters ? `${Number((geofence.radiusMeters / 1000).toFixed(3))} km radius` : 'custom shape'}
         </Text>
         <Text numberOfLines={1} style={styles.meta}>
           {deviceCount === 0 ? 'No vehicles assigned' : `${deviceCount} vehicle${deviceCount === 1 ? '' : 's'}`}

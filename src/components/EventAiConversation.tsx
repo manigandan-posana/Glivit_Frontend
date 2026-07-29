@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -49,11 +50,26 @@ export function EventAiConversation({
     },
   ]);
   const [sendMessage, { isLoading }] = useSendChatMessageMutation();
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    const showEvents = ['keyboardDidShow', 'keyboardWillShow'] as const;
+    const hideEvents = ['keyboardDidHide', 'keyboardWillHide'] as const;
+    const subs = [
+      ...showEvents.map((e) =>
+        Keyboard.addListener(e as any, () => {
+          setKeyboardOpen(true);
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+        })
+      ),
+      ...hideEvents.map((e) =>
+        Keyboard.addListener(e as any, () => setKeyboardOpen(false))
+      ),
+    ];
     return () => {
       mountedRef.current = false;
+      subs.forEach((s) => s.remove());
     };
   }, []);
 
@@ -120,11 +136,13 @@ export function EventAiConversation({
     ['Description', context.description],
   ] as const;
 
+  const bottomPadding = keyboardOpen ? spacing.md : Math.max(spacing.md, insets.bottom);
+
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
-      style={[styles.screen, { paddingBottom: insets.bottom }]}>
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 98 : 0}
+      style={styles.screen}>
       <FlatList
         ref={listRef}
         data={messages}
@@ -211,7 +229,7 @@ export function EventAiConversation({
         }
       />
 
-      <View style={styles.composer}>
+      <View style={[styles.composer, { paddingBottom: bottomPadding }]}>
         <TextInput
           accessibilityLabel="Question about selected event"
           editable={!isLoading}

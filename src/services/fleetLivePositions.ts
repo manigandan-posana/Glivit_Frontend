@@ -20,6 +20,7 @@ import type { LivePositionEvent } from './livePositions';
  */
 
 import { snapCoordinateToRoadSync } from './roadSnapping';
+import { getSimulatedVehicle } from './vehicleSimulator';
 
 export type FleetTarget = {
   deviceId: number;
@@ -93,19 +94,20 @@ export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): Fl
       const timer = setInterval(() => {
         const map = targetsRef.current;
         map.forEach((v, id) => {
-          if (!v.moving) return;
-          const speedKph = Math.max(v.speed, 14);
-          const stepKm = (speedKph / 3600) * (DEMO_STEP_MS / 1000);
-          const heading = (v.heading + (Math.random() * 2 - 1) * 10 + 360) % 360;
-          const rad = (heading * Math.PI) / 180;
-          const dLat = (stepKm / 111.32) * Math.cos(rad);
-          const dLng =
-            (stepKm / (111.32 * Math.cos((v.latitude * Math.PI) / 180))) * Math.sin(rad);
+          const sim = getSimulatedVehicle(
+            id,
+            v.latitude,
+            v.longitude,
+            v.heading,
+            v.state,
+            v.moving
+          );
           map.set(id, {
             ...v,
-            latitude: v.latitude + dLat,
-            longitude: v.longitude + dLng,
-            heading,
+            latitude: sim.latitude,
+            longitude: sim.longitude,
+            speed: sim.speed,
+            heading: sim.heading,
             updatedAt: Date.now(),
           });
         });

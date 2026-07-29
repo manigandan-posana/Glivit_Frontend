@@ -7,6 +7,7 @@ import {
   getVehicleModel,
   VEHICLE_MODELS,
   type VehicleModelCategory,
+  getModelCategory,
 } from './Vehicle3DMarker';
 
 type Props = {
@@ -15,6 +16,7 @@ type Props = {
   compact?: boolean;
   errorMessage?: string | null;
   loading?: boolean;
+  category?: string | null;
 };
 
 const CATEGORY_ICONS: Record<
@@ -32,9 +34,15 @@ export function VehicleModelPicker({
   compact = false,
   errorMessage,
   loading = false,
+  category,
 }: Props) {
   const selected = getVehicleModel(value);
   const cardWidth = compact ? COMPACT_CARD_WIDTH : CARD_WIDTH;
+
+  const filterCategory = category ? getModelCategory(category) : null;
+  const filteredModels = filterCategory
+    ? VEHICLE_MODELS.filter((model) => model.category === filterCategory)
+    : VEHICLE_MODELS;
   return (
     <View style={styles.root}>
       <View style={styles.labelRow}>
@@ -65,7 +73,7 @@ export function VehicleModelPicker({
         showsHorizontalScrollIndicator={false}
         snapToAlignment="start"
         snapToInterval={cardWidth + CARD_GAP}>
-        {VEHICLE_MODELS.map((model) => {
+        {filteredModels.map((model) => {
           const active = model.id === value;
           return (
             <Pressable

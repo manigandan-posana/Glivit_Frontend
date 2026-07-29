@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Provider } from 'react-redux';
 
 import { authStorage } from '@/src/services/authStorage';
+import { preloadVehicleModels } from '@/src/components/Vehicle3DMarker';
 import { hydrate } from '@/src/store/authSlice';
 import {
   useAppDispatch,
@@ -32,6 +33,7 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
 
   useEffect(() => {
+    preloadVehicleModels();
     let active = true;
     (async () => {
       try {

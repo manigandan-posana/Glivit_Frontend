@@ -1008,28 +1008,22 @@ export default function VehicleTrackerScreen() {
 
   const snapSheet = useCallback(
     (expanded: boolean) => {
-      const collapsedOffset = Math.max(160, sheetHeightRef.current - 128);
-      const wasExpanded = sheetExpandedRef.current;
+      const collapsedOffset = Math.max(160, sheetHeightRef.current - 118);
       sheetExpandedRef.current = expanded;
       sheetTranslateY.stopAnimation();
       if (sheetAnimationFrameRef.current != null) {
         cancelAnimationFrame(sheetAnimationFrameRef.current);
         sheetAnimationFrameRef.current = null;
       }
+      setSheetExpanded(expanded);
       if (expanded) {
-        setSheetExpanded(true);
-        sheetAnimationFrameRef.current = requestAnimationFrame(() => {
-          sheetAnimationFrameRef.current = null;
-          if (!screenMountedRef.current) return;
-          if (!wasExpanded) sheetTranslateY.setValue(collapsedOffset);
-          Animated.spring(sheetTranslateY, {
-            damping: 22,
-            mass: 0.82,
-            stiffness: 240,
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        });
+        Animated.spring(sheetTranslateY, {
+          damping: 22,
+          mass: 0.82,
+          stiffness: 240,
+          toValue: 0,
+          useNativeDriver: true,
+        }).start();
       } else {
         Animated.spring(sheetTranslateY, {
           damping: 24,
@@ -1037,12 +1031,7 @@ export default function VehicleTrackerScreen() {
           stiffness: 250,
           toValue: collapsedOffset,
           useNativeDriver: true,
-        }).start(({ finished }) => {
-          if (finished && screenMountedRef.current) {
-            setSheetExpanded(false);
-            sheetTranslateY.setValue(0);
-          }
-        });
+        }).start();
       }
       haptic();
     },
@@ -1063,13 +1052,13 @@ export default function VehicleTrackerScreen() {
           });
         },
         onPanResponderMove: (_, gesture) => {
-          const collapsedOffset = Math.max(160, sheetHeightRef.current - 128);
+          const collapsedOffset = Math.max(160, sheetHeightRef.current - 118);
           sheetTranslateY.setValue(
             Math.max(0, Math.min(collapsedOffset, sheetDragStartRef.current + gesture.dy))
           );
         },
         onPanResponderRelease: (_, gesture) => {
-          const collapsedOffset = Math.max(160, sheetHeightRef.current - 128);
+          const collapsedOffset = Math.max(160, sheetHeightRef.current - 118);
           const projected = sheetDragStartRef.current + gesture.dy + gesture.vy * 90;
           snapSheet(projected < collapsedOffset * 0.5);
         },
@@ -1089,12 +1078,8 @@ export default function VehicleTrackerScreen() {
     (event: LayoutChangeEvent) => {
       const nextHeight = Math.ceil(event.nativeEvent.layout.height);
       if (nextHeight <= 0) return;
-      if (sheetExpandedRef.current) {
-        sheetHeightRef.current = nextHeight;
-        setSheetHeight((current) => (current === nextHeight ? current : nextHeight));
-      } else {
-        setCollapsedSheetHeight((current) => (current === nextHeight ? current : nextHeight));
-      }
+      sheetHeightRef.current = nextHeight;
+      setSheetHeight((current) => (current === nextHeight ? current : nextHeight));
     },
     []
   );
@@ -1574,9 +1559,19 @@ export default function VehicleTrackerScreen() {
           // Recorded route history lives on the SEPARATE playback screen, so the
           // live screen never shows past/complete routes — it links out instead.
           if (validDeviceId) {
+            const variant = modelForVehicle(vehicleCategory, deviceId);
+            const model = getVehicleModel(variant);
             router.push({
               pathname: '/trip-playback' as never,
-              params: { deviceId: String(deviceId), name: vehicleName },
+              params: {
+                deviceId: String(deviceId),
+                name: vehicleName,
+                category: vehicleCategory,
+                make: model.label,
+                model: model.id,
+                speed: String(deviceDetail?.speed ?? 0),
+                heading: String(deviceDetail?.course ?? 0),
+              },
             });
           }
           showToast('Opening route history');
@@ -2683,7 +2678,12 @@ const LiveDetailsSheet = memo(function LiveDetailsSheet({
       {/* LIVE screen: no progress bar, playback rate chips, or scrubber. The
           marker always tracks the newest streamed fix. */}
 
-      {expanded ? (
+      <Animated.View
+        pointerEvents={expanded ? 'auto' : 'none'}
+        style={{
+          opacity: expanded ? 1 : 0,
+        }}
+      >
         <Pressable
           accessibilityLabel={toolsExpanded ? 'Close map tools' : 'Open map tools'}
           accessibilityRole="button"
@@ -2703,73 +2703,73 @@ const LiveDetailsSheet = memo(function LiveDetailsSheet({
             {toolsExpanded ? 'Done' : '11 controls'}
           </Text>
         </Pressable>
-      ) : null}
 
-      {expanded && toolsExpanded ? (
-        <MapToolsPanel
-          activeId={selectedOptionId}
-          alertActive={alertActive}
-          following={following}
-          historyVisible={false}
-          nightMode={nightMode}
-          routeVisible={routeVisible}
-          satelliteMode={satelliteMode}
-          onSelect={onRouteTool}
-        />
-      ) : null}
+        {toolsExpanded ? (
+          <MapToolsPanel
+            activeId={selectedOptionId}
+            alertActive={alertActive}
+            following={following}
+            historyVisible={false}
+            nightMode={nightMode}
+            routeVisible={routeVisible}
+            satelliteMode={satelliteMode}
+            onSelect={onRouteTool}
+          />
+        ) : null}
 
-      {expanded && !toolsExpanded && selectedOptionData ? (
-        <RouteOptionDataPanel data={selectedOptionData} onClose={onClosePanel} />
-      ) : null}
+        {!toolsExpanded && selectedOptionData ? (
+          <RouteOptionDataPanel data={selectedOptionData} onClose={onClosePanel} />
+        ) : null}
 
-      {expanded && !toolsExpanded ? (
-        <>
-          <View style={styles.sheetModelPicker}>
-            <VehicleModelPicker
-              compact
-              errorMessage={modelLoadError}
-              loading={modelLoading}
-              onChange={onSelectModel}
-              value={carVariant}
-            />
-          </View>
-          <View style={styles.sheetStats}>
-            <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
-            <Metric icon="map-marker-distance" label="Covered" value={coveredText} />
-            <Metric icon="flag-checkered" label="Trip" value={totalText} />
-          </View>
-          <View style={[styles.sheetStats, styles.sheetStatsSecondary]}>
-            <Metric icon="engine-outline" label="Ignition" value={ignitionText} />
-            <Metric icon="access-point" label="GPS" value={gpsText} />
-            <Metric icon="car-info" label="Status" value={status} />
-          </View>
+        {!toolsExpanded ? (
+          <>
+            <View style={styles.sheetModelPicker}>
+              <VehicleModelPicker
+                compact
+                errorMessage={modelLoadError}
+                loading={modelLoading}
+                onChange={onSelectModel}
+                value={carVariant}
+              />
+            </View>
+            <View style={styles.sheetStats}>
+              <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
+              <Metric icon="map-marker-distance" label="Covered" value={coveredText} />
+              <Metric icon="flag-checkered" label="Trip" value={totalText} />
+            </View>
+            <View style={[styles.sheetStats, styles.sheetStatsSecondary]}>
+              <Metric icon="engine-outline" label="Ignition" value={ignitionText} />
+              <Metric icon="access-point" label="GPS" value={gpsText} />
+              <Metric icon="car-info" label="Status" value={status} />
+            </View>
 
-          <View style={styles.sheetActions}>
-            <Pressable
-              accessibilityLabel="Follow live vehicle"
-              accessibilityRole="button"
-              onPress={onFollowLive}
-              style={[styles.primaryAction, styles.primaryActionStopped]}>
-              <MaterialCommunityIcons color="#fff" name="crosshairs-gps" size={25} />
-              <Text style={styles.primaryActionText}>Follow live</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Center vehicle"
-              accessibilityRole="button"
-              onPress={() => onRouteTool('location')}
-              style={styles.secondaryAction}>
-              <MaterialCommunityIcons color={BRAND.greenGlow} name="crosshairs-gps" size={24} />
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Open route history"
-              accessibilityRole="button"
-              onPress={() => onRouteTool('history')}
-              style={styles.secondaryAction}>
-              <MaterialCommunityIcons color={BRAND.orange} name="history" size={24} />
-            </Pressable>
-          </View>
-        </>
-      ) : null}
+            <View style={styles.sheetActions}>
+              <Pressable
+                accessibilityLabel="Follow live vehicle"
+                accessibilityRole="button"
+                onPress={onFollowLive}
+                style={[styles.primaryAction, styles.primaryActionStopped]}>
+                <MaterialCommunityIcons color="#fff" name="crosshairs-gps" size={25} />
+                <Text style={styles.primaryActionText}>Follow live</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Center vehicle"
+                accessibilityRole="button"
+                onPress={() => onRouteTool('location')}
+                style={styles.secondaryAction}>
+                <MaterialCommunityIcons color={BRAND.greenGlow} name="crosshairs-gps" size={24} />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Open route history"
+                accessibilityRole="button"
+                onPress={() => onRouteTool('history')}
+                style={styles.secondaryAction}>
+                <MaterialCommunityIcons color={BRAND.orange} name="history" size={24} />
+              </Pressable>
+            </View>
+          </>
+        ) : null}
+      </Animated.View>
 
       {!expanded ? (
         <Pressable
