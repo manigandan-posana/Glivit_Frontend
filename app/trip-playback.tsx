@@ -323,6 +323,7 @@ export default function TripPlaybackScreen() {
           onReady={handleMapReady}
           onModelLoadState={handleModelLoadState}
           playing={appActive && playing}
+          speed={speed}
           stops={data.stops}
           track={track}
           ui={ui}
@@ -406,6 +407,19 @@ export default function TripPlaybackScreen() {
             <MaterialCommunityIcons color={G.text} name="chevron-right" size={18} />
           </Pressable>
         </View>
+        <Pressable
+          accessibilityLabel="Reload trip history"
+          accessibilityRole="button"
+          disabled={isFetching}
+          hitSlop={12}
+          onPress={() => refetch()}
+          style={styles.iconBtn}>
+          {isFetching ? (
+            <ActivityIndicator color={G.text} size="small" />
+          ) : (
+            <MaterialCommunityIcons color={G.text} name="refresh" size={20} />
+          )}
+        </Pressable>
       </View>
 
       {/* Scene, model and camera controls only make sense over a real route. */}
@@ -560,6 +574,11 @@ function Center({ text, spinner, onRetry }: { text: string; spinner?: boolean; o
   );
 }
 
+function lerpAngle(start: number, end: number, t: number): number {
+  const da = (((end - start) % 360) + 540) % 360 - 180;
+  return normalizeHeading(start + da * t);
+}
+
 type CinematicTripMapProps = {
   accent: string;
   cameraCommandId: number;
@@ -569,6 +588,7 @@ type CinematicTripMapProps = {
   onModelLoadState: (state: 'loading' | 'ready' | 'error', message?: string) => void;
   onReady: () => void;
   playing: boolean;
+  speed: number;
   stops: PlaybackStopMarker[];
   track: PlaybackTrack;
   ui: number;
@@ -628,6 +648,7 @@ function CinematicTripMap({
   onModelLoadState,
   onReady,
   playing,
+  speed,
   stops,
   track,
   ui,
@@ -754,7 +775,6 @@ function CinematicTripMap({
   useEffect(() => {
     setAutoFollow(true);
     lastCameraAtRef.current = 0;
-    lastCameraModeRef.current = null;
   }, [cameraCommandId]);
 
   const projectVehicle = useCallback(async (force = false) => {
@@ -827,7 +847,11 @@ function CinematicTripMap({
       return;
     }
     if (!playing && !modeChanged) return;
-    if (!modeChanged && now - lastCameraAtRef.current < 540) return;
+
+    // Scale animation interval and duration according to playback speed
+    const baseInterval = speed > 2 ? 160 : speed > 1 ? 220 : 280;
+    const interval = modeChanged ? 0 : baseInterval;
+    if (!modeChanged && now - lastCameraAtRef.current < interval) return;
 
     const previousCoordinate = lastCameraCoordinateRef.current;
     const movementKm = previousCoordinate
@@ -838,51 +862,51 @@ function CinematicTripMap({
           cur.lng
         )
       : Number.POSITIVE_INFINITY;
-    if (!modeChanged && movementKm < 0.0025) return;
+    if (!modeChanged && movementKm < 0.0003) return;
 
-    const nextHeading = Number.isFinite(cur.heading)
-      ? normalizeHeading(cur.heading)
-      : (stableHeadingRef.current ?? 0);
-    if (
-      stableHeadingRef.current == null ||
-      (cur.speed > 2.5 && movementKm >= 0.001)
-    ) {
-      stableHeadingRef.current = nextHeading;
-    }
-    const travelHeading = stableHeadingRef.current ?? nextHeading;
-    const stopped = cur.speed < 2.5;
-    const highSpeed = cur.speed >= 55;
+    const rawHeading = Number.isFinite(cur.heading) ? normalizeHeading(cur.heading) : 0;
+    const prevHeading = stableHeadingRef.current ?? rawHeading;
+    // Smooth angle lerp to eliminate camera twisting/jittering
+    const travelHeading = modeChanged
+      ? rawHeading
+      : lerpAngle(prevHeading, rawHeading, 0.32);
+    stableHeadingRef.current = travelHeading;
+
+    // Smooth continuous speed-based scaling without discrete steps
+    const speedRatio = Math.min(1, Math.max(0, cur.speed / 100));
     let pitch = 28;
-    let zoom = stopped ? 16.7 : highSpeed ? 15.4 : 16;
+    let zoom = 16.2 - speedRatio * 0.5;
     let heading = 0;
-    let forwardMeters = stopped ? 6 : Math.min(38, 14 + cur.speed * 0.32);
+    let forwardMeters = 8 + speedRatio * 14;
 
     if (cameraMode === 'chase') {
       pitch = 48;
-      zoom = stopped ? 16.8 : highSpeed ? 15.6 : 16.2;
+      zoom = 16.4 - speedRatio * 0.6;
       heading = travelHeading;
-      forwardMeters = stopped ? 8 : Math.min(62, 24 + cur.speed * 0.5);
+      forwardMeters = 14 + speedRatio * 20;
     } else if (cameraMode === 'cinematic') {
-      pitch = 58;
-      zoom = stopped ? 16.7 : highSpeed ? 15.35 : 15.9;
+      pitch = 55;
+      zoom = 16.0 - speedRatio * 0.5;
       heading = travelHeading;
-      forwardMeters = stopped ? 10 : Math.min(82, 34 + cur.speed * 0.7);
+      forwardMeters = 16 + speedRatio * 22;
     } else if (cameraMode === 'drone') {
       pitch = 36;
-      zoom = stopped ? 14.4 : highSpeed ? 13.5 : 14;
+      zoom = 14.2 - speedRatio * 0.6;
       heading = travelHeading;
-      forwardMeters = stopped ? 0 : Math.min(54, 20 + cur.speed * 0.35);
+      forwardMeters = 10 + speedRatio * 14;
     } else if (cameraMode === 'top') {
       pitch = 0;
-      zoom = stopped ? 17 : highSpeed ? 15.7 : 16.4;
+      zoom = 16.5 - speedRatio * 0.6;
       heading = 0;
       forwardMeters = 0;
     }
 
     const center = coordinateAhead(cur.lat, cur.lng, travelHeading, forwardMeters);
+    const duration = modeChanged ? 550 : Math.min(360, Math.max(180, Math.round(baseInterval * 1.1)));
+
     mapRef.current.animateCamera(
       { center, heading, pitch, zoom },
-      { duration: modeChanged ? 650 : 480 }
+      { duration }
     );
     setMapCameraHeading(heading);
     lastCameraAtRef.current = now;
@@ -900,6 +924,7 @@ function CinematicTripMap({
     playing,
     resumeRequest,
     routeCoords,
+    speed,
   ]);
 
   const handleNativeMapReady = useCallback(() => {

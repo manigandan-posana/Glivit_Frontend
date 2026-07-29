@@ -40,9 +40,9 @@ type Notification = {
 };
 
 function relativeTime(iso?: string | null): { label: string; ms: number } {
-  if (!iso) return { label: '—', ms: 0 };
+  if (!iso) return { label: '-', ms: 0 };
   const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return { label: '—', ms: 0 };
+  if (!Number.isFinite(ms)) return { label: '-', ms: 0 };
   const diff = Date.now() - ms;
   if (diff < 60_000) return { label: 'Just now', ms };
   if (diff < 3_600_000) return { label: `${Math.floor(diff / 60_000)}m ago`, ms };

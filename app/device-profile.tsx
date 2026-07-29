@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/src/components/ui/Button';
@@ -21,7 +21,7 @@ export default function DeviceProfileScreen() {
   const styles = useMemo(() => makeStyles(c), [c]);
   const params = useLocalSearchParams<{ id?: string }>();
   const id = Number(params.id);
-  const { data, isLoading, isError, error, refetch } = useGetDeviceQuery(id, { skip: !Number.isFinite(id) });
+  const { data, isLoading, isFetching, isError, error, refetch } = useGetDeviceQuery(id, { skip: !Number.isFinite(id) });
 
   if (isLoading) return <LoadingView label="Loading device profile..." />;
   if (isError || !data) return <ErrorRetryView message={apiErrorMessage(error)} onRetry={refetch} />;
@@ -37,6 +37,13 @@ export default function DeviceProfileScreen() {
       <View style={styles.header}>
         <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.back}>
           <MaterialCommunityIcons color="#FFFFFF" name="arrow-left" size={24} />
+        </Pressable>
+        <Pressable accessibilityRole="button" disabled={isFetching} onPress={() => refetch()} style={styles.reload}>
+          {isFetching ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <MaterialCommunityIcons color="#FFFFFF" name="refresh" size={22} />
+          )}
         </Pressable>
         <View style={styles.vehicleIcon}>
           <MaterialCommunityIcons color="#FFFFFF" name="car-connected" size={40} />
@@ -131,6 +138,7 @@ const makeStyles = (c: ThemeColors) =>
       padding: spacing.lg,
     },
     back: { alignItems: 'center', height: 42, justifyContent: 'center', left: spacing.sm, position: 'absolute', top: spacing.sm, width: 42 },
+    reload: { alignItems: 'center', height: 42, justifyContent: 'center', right: spacing.sm, position: 'absolute', top: spacing.sm, width: 42 },
     vehicleIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 999, height: 76, justifyContent: 'center', marginTop: spacing.lg, width: 76 },
     name: { color: '#FFFFFF', fontSize: typography.h2, fontWeight: '900', marginTop: spacing.sm },
     subtitle: { color: 'rgba(255,255,255,0.78)', fontSize: typography.caption },

@@ -1,4 +1,5 @@
 import type { PlaybackTrackPoint } from '@/src/types/api';
+import { snapCoordinateToRoadSync } from '@/src/services/roadSnapping';
 
 /**
  * Truthful playback motion engine.
@@ -55,49 +56,12 @@ export type PlaybackSample = {
   atEnd: boolean;
 };
 
-const EARTH_RADIUS_KM = 6371;
+import { bearingDeg, haversineKm, lerpAngle, normalizeHeading } from '@/src/services/geoMath';
+export { bearingDeg, haversineKm, lerpAngle, normalizeHeading };
+
 const MIN_BEARING_DISTANCE_KM = 0.001;
 const STOPPED_JITTER_DISTANCE_KM = 0.008;
 const MAX_REASONABLE_GPS_SPEED_KPH = 260;
-
-function toRadians(value: number): number {
-  return (value * Math.PI) / 180;
-}
-
-function toDegrees(value: number): number {
-  return (value * 180) / Math.PI;
-}
-
-export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const dLat = toRadians(lat2 - lat1);
-  const dLng = toRadians(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) ** 2;
-  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-export function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const startLat = toRadians(lat1);
-  const endLat = toRadians(lat2);
-  const dLng = toRadians(lng2 - lng1);
-  const y = Math.sin(dLng) * Math.cos(endLat);
-  const x =
-    Math.cos(startLat) * Math.sin(endLat) -
-    Math.sin(startLat) * Math.cos(endLat) * Math.cos(dLng);
-  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
-}
-
-export function normalizeHeading(value: number | null | undefined, fallback = 0): number {
-  const heading = Number.isFinite(value) ? Number(value) : fallback;
-  return ((heading % 360) + 360) % 360;
-}
-
-/** Shortest-path angular interpolation so headings never spin the long way. */
-export function lerpAngle(a: number, b: number, t: number): number {
-  const diff = ((((b - a) % 360) + 540) % 360) - 180;
-  return (a + diff * t + 360) % 360;
-}
 
 export function isValidGpsPoint(point: PlaybackTrackPoint): boolean {
   return (
@@ -154,29 +118,41 @@ function preparePoints(rawPoints: PlaybackTrackPoint[]): {
 
   const corrected: PlaybackTrackPoint[] = [];
   accepted.forEach((point, index) => {
-    // Keep the source coordinates untouched. Without a real road-matching API,
-    // projecting points onto nearby route segments can place a vehicle on the
-    // wrong carriageway or an older overlapping road.
+    // Snap raw point to valid road coordinate
+    const snap = snapCoordinateToRoadSync(point.lat, point.lng, point.course);
+    const lastValid = corrected[corrected.length - 1];
+    const lat = snap.snapped ? snap.latitude : point.lat;
+    const lng = snap.snapped ? snap.longitude : point.lng;
+
     const next = accepted[index + 1];
     const previous = accepted[index - 1];
-    const nextDistance = next ? haversineKm(point.lat, point.lng, next.lat, next.lng) : 0;
-    const previousDistance = previous ? haversineKm(previous.lat, previous.lng, point.lat, point.lng) : 0;
+    const nextDistance = next ? haversineKm(lat, lng, next.lat, next.lng) : 0;
+    const previousDistance = previous ? haversineKm(previous.lat, previous.lng, lat, lng) : 0;
     const previousBearing = corrected[index - 1]?.course;
     const isStopped =
       point.speed < 2 &&
       previousDistance < STOPPED_JITTER_DISTANCE_KM &&
       nextDistance < STOPPED_JITTER_DISTANCE_KM;
+
     const derived =
       isStopped && Number.isFinite(previousBearing)
         ? normalizeHeading(previousBearing)
-        : next && nextDistance >= MIN_BEARING_DISTANCE_KM
-          ? bearingDeg(point.lat, point.lng, next.lat, next.lng)
-          : previous && previousDistance >= MIN_BEARING_DISTANCE_KM
-            ? bearingDeg(previous.lat, previous.lng, point.lat, point.lng)
-            : Number.isFinite(point.course) && point.course !== 0
-              ? normalizeHeading(point.course)
-              : normalizeHeading(previousBearing, 0);
-    corrected.push({ ...point, course: derived });
+        : snap.snapped && Number.isFinite(snap.bearing)
+          ? snap.bearing
+          : next && nextDistance >= MIN_BEARING_DISTANCE_KM
+            ? bearingDeg(lat, lng, next.lat, next.lng)
+            : previous && previousDistance >= MIN_BEARING_DISTANCE_KM
+              ? bearingDeg(previous.lat, previous.lng, lat, lng)
+              : Number.isFinite(point.course) && point.course !== 0
+                ? normalizeHeading(point.course)
+                : normalizeHeading(previousBearing, 0);
+
+    corrected.push({
+      ...point,
+      lat,
+      lng,
+      course: derived,
+    });
   });
 
   return {

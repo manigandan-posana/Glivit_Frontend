@@ -1209,8 +1209,8 @@ export default function VehicleTrackerScreen() {
       coordinate.longitude,
       coordinate.latitude,
       liveHeading,
-      680,
-      true
+      500,
+      false
     );
     showToast('Cinematic tracking resumed');
   }, [cameraMode, haptic, showToast]);

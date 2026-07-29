@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
 import {
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -15,10 +16,22 @@ type TextFieldProps = TextInputProps & {
   label?: string;
   error?: string;
   secure?: boolean;
+  leftIcon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  onLeftIconPress?: () => void;
 };
 
-/** Labelled input with a validation error slot and optional password toggle. */
-export function TextField({ label, error, secure = false, style, onFocus, onBlur, ...rest }: TextFieldProps) {
+/** Labelled input with a validation error slot and optional password toggle or leading icon. */
+export function TextField({
+  label,
+  error,
+  secure = false,
+  leftIcon,
+  onLeftIconPress,
+  style,
+  onFocus,
+  onBlur,
+  ...rest
+}: TextFieldProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [hidden, setHidden] = useState(secure);
@@ -33,6 +46,21 @@ export function TextField({ label, error, secure = false, style, onFocus, onBlur
           focused ? styles.inputFocused : null,
           error ? styles.inputError : null,
         ]}>
+        {leftIcon ? (
+          <Pressable
+            accessibilityLabel="Search icon"
+            accessibilityRole="button"
+            disabled={!onLeftIconPress}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={onLeftIconPress}>
+            <MaterialCommunityIcons
+              color={focused ? colors.primary : colors.textSecondary}
+              name={leftIcon}
+              size={20}
+              style={{ marginRight: spacing.xs }}
+            />
+          </Pressable>
+        ) : null}
         <TextInput
           placeholderTextColor={colors.textMuted}
           secureTextEntry={hidden}

@@ -107,6 +107,17 @@ const DEMO_TOKENS: TokenResponse = {
 
 const NOW = Date.now();
 
+const DEMO_VEHICLE_NAMES: Record<number, string> = {
+  1: 'Express Delivery Truck',
+  2: 'Koramangala Logistics Transporter',
+  3: 'Indiranagar City Shuttle',
+  4: 'Hebbal Dispatch Bike',
+  5: 'HSR Concrete Mixer 52',
+  6: 'Malleshwaram Caterpillar Excavator',
+  7: 'Museum Executive SUV',
+  8: 'Ulsoor Urban EV Transport',
+};
+
 const DEMO_DEVICES: DeviceDetail[] = [
   makeDevice(1, 'TN20CM7677', 'CAR', 'RUNNING', 12.9718, 77.5946, 46, 'MG Road, Bengaluru'),
   makeDevice(2, 'KA05MJ1234', 'TRUCK', 'STOPPED', 12.9352, 77.6245, 0, 'Koramangala, Bengaluru'),
@@ -147,6 +158,10 @@ const DEMO_DEVICES: DeviceDetail[] = [
     )
   ),
 ];
+
+export function getDemoDeviceById(id: number): DeviceDetail | undefined {
+  return DEMO_DEVICES.find((d) => d.id === id);
+}
 
 const DEMO_PROJECTS: ProjectDto[] = [
   { id: 1, name: 'Bengaluru Distribution', description: 'City fleet operations', status: 'ACTIVE' },
@@ -213,6 +228,15 @@ const DEMO_EVENTS: EventDto[] = [
   },
 ];
 
+export function addDemoEvent(event: EventDto): void {
+  const existing = DEMO_EVENTS.find(
+    (e) => e.deviceId === event.deviceId && e.eventType === event.eventType && e.address === event.address
+  );
+  if (!existing) {
+    DEMO_EVENTS.unshift(event);
+  }
+}
+
 const DEMO_GEOFENCES: GeofenceDto[] = [
   {
     id: 1,
@@ -254,38 +278,52 @@ let DEMO_SETTINGS: SettingsDto = {
 };
 
 function makeDevice(
-  id: number,
-  name: string,
-  category: string,
-  state: string,
-  latitude: number,
-  longitude: number,
-  speed: number,
-  address: string,
+  id: number = 1,
+  name: string = 'Vehicle',
+  category: string = 'CAR',
+  state: string = 'RUNNING',
+  latitude: number = 0,
+  longitude: number = 0,
+  speed: number = 0,
+  address: string = '',
   course = 90
 ): DeviceDetail {
+  const safeId = typeof id === 'number' && Number.isFinite(id) ? id : 1;
+  const safeName = typeof name === 'string' && name ? name : `Vehicle #${safeId}`;
+  const safeCategory = typeof category === 'string' && category ? category : 'CAR';
+  const safeState = typeof state === 'string' && state ? state : 'RUNNING';
+  const safeLat = typeof latitude === 'number' && Number.isFinite(latitude) ? latitude : 0;
+  const safeLng = typeof longitude === 'number' && Number.isFinite(longitude) ? longitude : 0;
+  const safeSpeed = typeof speed === 'number' && Number.isFinite(speed) ? speed : 0;
+  const safeAddress = typeof address === 'string' ? address : '';
+  const safeCourse = typeof course === 'number' && Number.isFinite(course) ? course : 90;
+
+  const names = typeof DEMO_VEHICLE_NAMES === 'object' && DEMO_VEHICLE_NAMES !== null ? DEMO_VEHICLE_NAMES : {};
+  const vehicleName = names[safeId] ?? `${safeCategory} Unit #${safeId}`;
+
   return {
-    id,
-    name,
-    imei: `86400000000000${id}`,
-    category,
-    vehicleId: id,
-    state,
-    latitude,
-    longitude,
-    speed,
-    course,
-    ignition: state === 'RUNNING' || state === 'IDLE',
-    gpsValid: state !== 'NO_DATA',
-    address,
-    lastUpdate: new Date(NOW - (state === 'RUNNING' ? id * 10_000 : id * 60_000)).toISOString(),
-    expiryDate: state === 'EXPIRED' ? '2025-01-01' : '2026-12-31',
-    status: state === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE',
+    id: safeId,
+    name: safeName,
+    vehicleName,
+    imei: `86400000000000${safeId}`,
+    category: safeCategory,
+    vehicleId: safeId,
+    state: safeState,
+    latitude: safeLat,
+    longitude: safeLng,
+    speed: safeSpeed,
+    course: safeCourse,
+    ignition: safeState === 'RUNNING' || safeState === 'IDLE',
+    gpsValid: safeState !== 'NO_DATA',
+    address: safeAddress,
+    lastUpdate: new Date(NOW - (safeState === 'RUNNING' ? safeId * 10_000 : safeId * 60_000)).toISOString(),
+    expiryDate: safeState === 'EXPIRED' ? '2025-01-01' : '2026-12-31',
+    status: safeState === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE',
     model: 'DEMO-GT06',
     projectId: 1,
     groupId: 1,
     managerId: 1,
-    simNumber: `90000000${id}`,
+    simNumber: `90000000${safeId}`,
     simProvider: 'Demo Telecom',
     simApn: 'internet',
     driverName: 'Demo Driver',
@@ -299,23 +337,45 @@ function makeDevice(
 }
 
 function toSummary(d: DeviceDetail): DeviceSummary {
+  if (!d || typeof d !== 'object') {
+    return {
+      id: 1,
+      name: 'Vehicle #1',
+      imei: '864000000000001',
+      category: 'CAR',
+      vehicleId: 1,
+      vehicleName: 'Vehicle #1',
+      state: 'RUNNING',
+      latitude: 0,
+      longitude: 0,
+      speed: 0,
+      course: 90,
+      ignition: true,
+      gpsValid: true,
+      address: '',
+      lastUpdate: new Date().toISOString(),
+      expiryDate: '2026-12-31',
+      status: 'ACTIVE',
+    };
+  }
   return {
-    id: d.id,
-    name: d.name,
-    imei: d.imei,
-    category: d.category,
-    vehicleId: d.vehicleId,
-    state: d.state,
-    latitude: d.latitude,
-    longitude: d.longitude,
-    speed: d.speed,
-    course: d.course,
-    ignition: d.ignition,
-    gpsValid: d.gpsValid,
-    address: d.address,
-    lastUpdate: d.lastUpdate,
-    expiryDate: d.expiryDate,
-    status: d.status,
+    id: d.id ?? 1,
+    name: d.name ?? 'Vehicle',
+    imei: d.imei ?? '', 
+    category: d.category ?? 'CAR',
+    vehicleId: d.vehicleId ?? d.id ?? 1,
+    vehicleName: d.vehicleName ?? d.name ?? 'Vehicle',
+    state: d.state ?? 'RUNNING',
+    latitude: typeof d.latitude === 'number' && Number.isFinite(d.latitude) ? d.latitude : 0,
+    longitude: typeof d.longitude === 'number' && Number.isFinite(d.longitude) ? d.longitude : 0,
+    speed: typeof d.speed === 'number' && Number.isFinite(d.speed) ? d.speed : 0,
+    course: typeof d.course === 'number' && Number.isFinite(d.course) ? d.course : 90,
+    ignition: Boolean(d.ignition),
+    gpsValid: Boolean(d.gpsValid),
+    address: d.address ?? '',
+    lastUpdate: d.lastUpdate ?? new Date().toISOString(),
+    expiryDate: d.expiryDate ?? '2026-12-31',
+    status: d.status ?? 'ACTIVE',
   };
 }
 
@@ -334,8 +394,17 @@ function demoSummary(): DashboardSummary {
   return { counts, total: DEMO_DEVICES.length, lastUpdated: new Date().toISOString() };
 }
 
+function cloneDeep<T>(val: T): T {
+  if (val === null || typeof val !== 'object') return val;
+  try {
+    return structuredClone(val);
+  } catch {
+    return JSON.parse(JSON.stringify(val));
+  }
+}
+
 function envelope<T>(data: T): { data: ApiResponse<T> } {
-  return { data: { success: true, data, error: null } };
+  return { data: { success: true, data: cloneDeep(data), error: null } };
 }
 
 function pageOf<T>(content: T[], page = 0, size = 20): PageResponse<T> {
@@ -766,13 +835,13 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   const deviceMatch = url.match(/^\/devices\/(\d+)$/);
   if (deviceMatch) {
     const id = Number(deviceMatch[1]);
-    const found = DEMO_DEVICES.find((d) => d.id === id);
-    if (found && method === 'DELETE') {
-      found.status = 'SUSPENDED';
+    const index = DEMO_DEVICES.findIndex((d) => d.id === id);
+    if (index >= 0 && method === 'DELETE') {
+      DEMO_DEVICES[index] = { ...DEMO_DEVICES[index], status: 'SUSPENDED' };
       audit('DELETE_DEVICE', 'DEVICE', String(id));
       return envelope(null);
     }
-    return found ? envelope(found) : notFound('Device not found');
+    return index >= 0 ? envelope(DEMO_DEVICES[index]) : notFound('Device not found');
   }
   if (url === '/projects') {
     if (method === 'POST' && body) {
@@ -847,12 +916,16 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   }
   const eventAckMatch = url.match(/^\/events\/(\d+)\/acknowledge$/);
   if (eventAckMatch) {
-    const found = DEMO_EVENTS.find((e) => e.id === Number(eventAckMatch[1]));
-    if (!found) return notFound('Event not found');
-    found.acknowledged = true;
-    found.acknowledgedAt = new Date().toISOString();
-    audit('ACK_EVENT', 'EVENT', String(found.id), found.eventType);
-    return envelope(found);
+    const index = DEMO_EVENTS.findIndex((e) => e.id === Number(eventAckMatch[1]));
+    if (index < 0) return notFound('Event not found');
+    const updated = {
+      ...DEMO_EVENTS[index],
+      acknowledged: true,
+      acknowledgedAt: new Date().toISOString(),
+    };
+    DEMO_EVENTS[index] = updated;
+    audit('ACK_EVENT', 'EVENT', String(updated.id), updated.eventType);
+    return envelope(updated);
   }
   if (url === '/geofences') {
     if (method === 'POST' && body) {
@@ -897,6 +970,7 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
         type: String(body.type ?? DEMO_GEOFENCES[index].type),
         coordinates: (body.coordinates as number[][]) ?? DEMO_GEOFENCES[index].coordinates,
         radiusMeters: (body.radiusMeters as number) ?? DEMO_GEOFENCES[index].radiusMeters,
+        assignedDeviceIds: (body.assignedDeviceIds as number[]) ?? DEMO_GEOFENCES[index].assignedDeviceIds,
         enterAlert: body.enterAlert == null ? true : Boolean(body.enterAlert),
         exitAlert: body.exitAlert == null ? true : Boolean(body.exitAlert),
         active: body.active == null ? true : Boolean(body.active),
@@ -1000,12 +1074,16 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   }
   const aiAckMatch = url.match(/^\/ai\/events\/(\d+)\/acknowledge$/);
   if (aiAckMatch) {
-    const found = DEMO_AI_EVENTS.find((e) => e.id === Number(aiAckMatch[1]));
-    if (!found) return notFound('AI event not found');
-    found.acknowledged = true;
-    found.acknowledgedAt = new Date().toISOString();
-    audit('ACK_AI_EVENT', 'AI_EVENT', String(found.id), found.eventType);
-    return envelope(found);
+    const index = DEMO_AI_EVENTS.findIndex((e) => e.id === Number(aiAckMatch[1]));
+    if (index < 0) return notFound('AI event not found');
+    const updated = {
+      ...DEMO_AI_EVENTS[index],
+      acknowledged: true,
+      acknowledgedAt: new Date().toISOString(),
+    };
+    DEMO_AI_EVENTS[index] = updated;
+    audit('ACK_AI_EVENT', 'AI_EVENT', String(updated.id), updated.eventType);
+    return envelope(updated);
   }
   if (url === '/ai/feedback') {
     audit('AI_FEEDBACK', 'AI_EVENT', String((body?.aiEventId as number) ?? 0));
@@ -1024,21 +1102,27 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   const geofenceSuggestActionMatch = url.match(/^\/ai\/geofence\/suggestions\/(\d+)\/(approve|dismiss)$/);
   if (geofenceSuggestActionMatch) {
     const id = Number(geofenceSuggestActionMatch[1]);
-    const found = DEMO_GEOFENCE_SUGGESTIONS.find((s) => s.id === id);
-    if (!found) return notFound('Geofence suggestion not found');
+    const index = DEMO_GEOFENCE_SUGGESTIONS.findIndex((s) => s.id === id);
+    if (index < 0) return notFound('Geofence suggestion not found');
+    const found = DEMO_GEOFENCE_SUGGESTIONS[index];
     const action = geofenceSuggestActionMatch[2];
     if (found.status !== 'PENDING') return notFound('Geofence suggestion has already been processed');
-    found.status = action === 'approve' ? 'APPROVED' : 'DISMISSED';
-    audit('AI_GEOFENCE_' + geofenceSuggestActionMatch[2].toUpperCase(), 'GEOFENCE', String(id));
+    const updatedStatus = action === 'approve' ? 'APPROVED' : 'DISMISSED';
+    const updatedSuggestion: GeofenceSuggestionDto = {
+      ...found,
+      status: updatedStatus,
+    };
+    DEMO_GEOFENCE_SUGGESTIONS[index] = updatedSuggestion;
+    audit('AI_GEOFENCE_' + action.toUpperCase(), 'GEOFENCE', String(id));
     if (action === 'approve') {
       const created: GeofenceDto = {
-        id: Math.max(0, ...DEMO_GEOFENCES.map((geofence) => geofence.id)) + 1,
-        name: found.suggestedName || `Suggested geofence ${found.id}`,
-        description: found.reasoning ?? null,
+        id: nextId(DEMO_GEOFENCES),
+        name: updatedSuggestion.suggestedName || `Suggested geofence ${updatedSuggestion.id}`,
+        description: updatedSuggestion.reasoning ?? null,
         color: '#27D34D',
         type: 'CIRCLE',
-        coordinates: [[found.centerLongitude, found.centerLatitude]],
-        radiusMeters: found.suggestedRadiusMeters,
+        coordinates: [[updatedSuggestion.centerLongitude, updatedSuggestion.centerLatitude]],
+        radiusMeters: updatedSuggestion.suggestedRadiusMeters,
         corridorWidthMeters: null,
         assignedDeviceIds: [],
         assignedGroupIds: [],

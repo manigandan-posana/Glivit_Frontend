@@ -75,6 +75,7 @@ export type DeviceSummary = {
   imei: string;
   category: string;
   vehicleId?: number | null;
+  vehicleName?: string | null;
   state: string;
   latitude?: number | null;
   longitude?: number | null;

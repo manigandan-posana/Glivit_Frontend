@@ -57,26 +57,18 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
 
 function RootNavigator() {
   const { bootstrapped } = useAuth();
-  const hasTenant = useHasTenant();
-  const authenticated = useIsAuthenticated();
 
   if (!bootstrapped) return null;
 
   return (
     <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
       <Stack.Screen name="index" />
-      <Stack.Protected guard={!hasTenant}>
-        <Stack.Screen name="company-code" />
-      </Stack.Protected>
-      <Stack.Protected guard={hasTenant && !authenticated}>
-        <Stack.Screen name="login" />
-      </Stack.Protected>
-      <Stack.Protected guard={authenticated}>
-        <Stack.Screen name="device-profile" />
-        <Stack.Screen name="live-track" />
-        <Stack.Screen name="trip-playback" />
-        <Stack.Screen name="(app)" />
-      </Stack.Protected>
+      <Stack.Screen name="company-code" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="device-profile" />
+      <Stack.Screen name="live-track" />
+      <Stack.Screen name="trip-playback" />
+      <Stack.Screen name="(app)" />
     </Stack>
   );
 }

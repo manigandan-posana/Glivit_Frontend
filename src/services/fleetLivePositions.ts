@@ -19,6 +19,8 @@ import type { LivePositionEvent } from './livePositions';
  * Seeded from the device list so every authorised vehicle shows immediately.
  */
 
+import { snapCoordinateToRoadSync } from './roadSnapping';
+
 export type FleetTarget = {
   deviceId: number;
   latitude: number;
@@ -43,12 +45,13 @@ const DEMO_STEP_MS = 1200;
 
 function makeTarget(v: DeviceSummary): FleetTarget | null {
   if (v.latitude == null || v.longitude == null) return null;
+  const snap = snapCoordinateToRoadSync(v.latitude, v.longitude, v.course);
   return {
     deviceId: v.id,
-    latitude: v.latitude,
-    longitude: v.longitude,
+    latitude: snap.snapped ? snap.latitude : v.latitude,
+    longitude: snap.snapped ? snap.longitude : v.longitude,
     speed: v.speed,
-    heading: v.course,
+    heading: snap.snapped ? snap.bearing : v.course,
     state: v.state,
     moving: MOVING_STATES.has(v.state),
     updatedAt: Date.now(),
@@ -126,12 +129,13 @@ export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): Fl
         const map = targetsRef.current;
         const existed = map.has(event.deviceId);
         const state = event.state ?? map.get(event.deviceId)?.state ?? 'NO_DATA';
+        const snap = snapCoordinateToRoadSync(event.latitude, event.longitude, event.course);
         map.set(event.deviceId, {
           deviceId: event.deviceId,
-          latitude: event.latitude,
-          longitude: event.longitude,
+          latitude: snap.snapped ? snap.latitude : event.latitude,
+          longitude: snap.snapped ? snap.longitude : event.longitude,
           speed: event.speed,
-          heading: event.course,
+          heading: snap.snapped ? snap.bearing : event.course,
           state,
           moving: MOVING_STATES.has(state),
           updatedAt: Date.now(),

@@ -5,20 +5,22 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { apiErrorMessage } from '@/src/services/apiError';
-import { useGetAllDevicesQuery } from '@/src/services/devicesApi';
+import { useGetAllDevicesQuery, useGetDeviceQuery } from '@/src/services/devicesApi';
 import { useGetCommandsQuery, useSubmitCommandMutation } from '@/src/services/operationsApi';
 import { useTheme } from '@/src/theme/ThemeProvider';
-import type { CommandDto, DeviceSummary } from '@/src/types/api';
+import type { CommandDto, DeviceDetail, DeviceSummary } from '@/src/types/api';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 type CommandTone = 'safe' | 'danger';
@@ -50,12 +52,29 @@ export default function CommandsScreen() {
   const { data, isLoading, isFetching, isError, error, refetch } = useGetCommandsQuery({ size: 50 });
   const [selectedDeviceId, setSelectedDeviceId] = React.useState<number | null>(null);
   const [pendingCommand, setPendingCommand] = React.useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [showAllActivity, setShowAllActivity] = React.useState(false);
   const [submitCommand] = useSubmitCommandMutation();
 
   const deviceList = React.useMemo(() => devices ?? [], [devices]);
+  const filteredDevices = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return deviceList;
+    return deviceList.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        String(d.id).includes(q) ||
+        (d.category && d.category.toLowerCase().includes(q))
+    );
+  }, [deviceList, searchQuery]);
+
   const selected =
     deviceList.find((device) => device.id === selectedDeviceId) ?? deviceList[0] ?? null;
+
+  const { data: selectedDeviceDetail, isLoading: loadingSelectedDetail } = useGetDeviceQuery(
+    selected?.id ?? 0,
+    { skip: !selected?.id }
+  );
 
   React.useEffect(() => {
     if (selected && selectedDeviceId == null) setSelectedDeviceId(selected.id);
@@ -130,44 +149,77 @@ export default function CommandsScreen() {
               {deviceList.length === 0 ? (
                 <Text style={styles.emptyLine}>No devices are available for this tenant.</Text>
               ) : (
-                <View style={styles.vehicleGrid}>
-                  {deviceList.map((device) => {
-                    const active = selected?.id === device.id;
-                    return (
-                      <Pressable
-                        accessibilityLabel={`Select ${device.name}`}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: active }}
-                        key={device.id}
-                        onPress={() => setSelectedDeviceId(device.id)}
-                        style={[styles.vehiclePill, active && styles.vehiclePillActive]}>
-                        {active ? (
-                          <MaterialCommunityIcons
-                            color={c.onPrimary}
-                            name="check-circle"
-                            size={18}
-                          />
-                        ) : (
-                          <View
-                            style={[
-                              styles.vehicleDot,
-                              { backgroundColor: stateColors[device.state] ?? stateColors.NO_DATA },
-                            ]}
-                          />
-                        )}
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.vehiclePillText, active && styles.vehiclePillTextActive]}>
-                          {device.name}
-                        </Text>
+                <>
+                  <View style={styles.searchBar}>
+                    <MaterialCommunityIcons color={c.textSecondary} name="magnify" size={20} />
+                    <TextInput
+                      autoCapitalize="characters"
+                      onChangeText={setSearchQuery}
+                      placeholder="Search vehicle number..."
+                      placeholderTextColor={c.textMuted}
+                      style={styles.searchInput}
+                      value={searchQuery}
+                    />
+                    {searchQuery ? (
+                      <Pressable hitSlop={6} onPress={() => setSearchQuery('')}>
+                        <MaterialCommunityIcons color={c.textMuted} name="close-circle" size={18} />
                       </Pressable>
-                    );
-                  })}
-                </View>
+                    ) : null}
+                  </View>
+
+                  {filteredDevices.length === 0 ? (
+                    <Text style={styles.emptyLine}>No vehicle matched "{searchQuery}"</Text>
+                  ) : (
+                    <ScrollView
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator
+                      style={styles.vehicleScrollContainer}
+                      contentContainerStyle={styles.vehicleGrid}>
+                      {filteredDevices.map((device) => {
+                        const active = selected?.id === device.id;
+                        return (
+                          <Pressable
+                            accessibilityLabel={`Select ${device.name}`}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            key={device.id}
+                            onPress={() => setSelectedDeviceId(device.id)}
+                            style={[styles.vehiclePill, active && styles.vehiclePillActive]}>
+                            {active ? (
+                              <MaterialCommunityIcons
+                                color={c.onPrimary}
+                                name="check-circle"
+                                size={18}
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.vehicleDot,
+                                  { backgroundColor: stateColors[device.state] ?? stateColors.NO_DATA },
+                                ]}
+                              />
+                            )}
+                            <Text
+                              numberOfLines={1}
+                              style={[styles.vehiclePillText, active && styles.vehiclePillTextActive]}>
+                              {device.vehicleName ? `${device.name} (${device.vehicleName})` : device.name}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                </>
               )}
             </Panel>
 
-            {selected ? <SelectedVehiclePanel device={selected} /> : null}
+            {selected ? (
+              <SelectedVehiclePanel
+                device={selected}
+                deviceDetail={selectedDeviceDetail}
+                isLoadingDetail={loadingSelectedDetail}
+              />
+            ) : null}
 
             <Panel>
               <SectionHeading icon="lightning-bolt" title="Quick Actions" />
@@ -265,16 +317,36 @@ function SectionHeading({
   );
 }
 
-function SelectedVehiclePanel({ device }: { device: DeviceSummary }) {
+function SelectedVehiclePanel({
+  device,
+  deviceDetail,
+  isLoadingDetail,
+}: {
+  device: DeviceSummary;
+  deviceDetail?: DeviceDetail | null;
+  isLoadingDetail?: boolean;
+}) {
   const { colors: c, stateColors } = useTheme();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const stateColor = stateColors[device.state] ?? stateColors.NO_DATA;
   const immobilised = Boolean(device.immobilised || device.locked);
 
+  const vehicleName =
+    deviceDetail?.vehicleName ||
+    deviceDetail?.driverName ||
+    device.vehicleName ||
+    device.name;
+
   return (
     <Panel>
       <SectionHeading icon="truck-outline" title="Selected Vehicle Details" />
       <View style={styles.detailGrid}>
+        <DetailCell
+          icon="car-info"
+          label="Vehicle Name"
+          value={isLoadingDetail && !vehicleName ? 'Loading...' : vehicleName}
+          wide
+        />
         <DetailCell icon="card-account-details-outline" label="Vehicle No." value={device.name} />
         <DetailCell icon="tag-outline" label="Category" value={device.category || 'Unknown'} />
         <DetailCell
@@ -310,7 +382,7 @@ function SelectedVehiclePanel({ device }: { device: DeviceSummary }) {
           <MaterialCommunityIcons color={c.danger} name="shield-alert-outline" size={18} />
           <Text style={styles.immobilisedText}>
             {device.immobilised ? 'Engine cut is active' : 'Vehicle is locked'}
-            {device.lastCommandAt ? ` · ${formatTime(device.lastCommandAt)}` : ''}
+            {device.lastCommandAt ? ` • ${formatTime(device.lastCommandAt)}` : ''}
           </Text>
         </View>
       ) : null}
@@ -461,7 +533,26 @@ const makeStyles = (c: ThemeColors) =>
     sectionHeading: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
     sectionTitle: { color: c.textPrimary, fontSize: typography.title, fontWeight: '800' },
 
-    // Select Vehicle — two columns so long registrations never truncate.
+    // Select Vehicle — search bar + scrollable grid
+    searchBar: {
+      alignItems: 'center',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: Platform.OS === 'ios' ? 8 : 4,
+    },
+    searchInput: {
+      color: c.textPrimary,
+      flex: 1,
+      fontSize: typography.body,
+      fontWeight: '700',
+      paddingVertical: 4,
+    },
+    vehicleScrollContainer: { maxHeight: 180 },
     vehicleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     vehiclePill: {
       alignItems: 'center',

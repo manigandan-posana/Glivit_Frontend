@@ -68,13 +68,20 @@ const DEFAULT_FORM: FormValues = {
 const RADIUS_PRESETS = [100, 250, 500, 1000] as const;
 const SEARCH_PLACES = [
   { name: 'Bengaluru Palace', latitude: 12.9985, longitude: 77.5921 },
-  { name: 'Koramangala', latitude: 12.9352, longitude: 77.6245 },
-  { name: 'Indiranagar', latitude: 12.9784, longitude: 77.6408 },
-  { name: 'MG Road', latitude: 12.9756, longitude: 77.6068 },
-  { name: 'Whitefield', latitude: 12.9698, longitude: 77.7499 },
-  { name: 'Electronic City', latitude: 12.8452, longitude: 77.6602 },
-  { name: 'Manyata Tech Park', latitude: 13.0500, longitude: 77.6200 },
+  { name: 'MG Road, Bengaluru', latitude: 12.9756, longitude: 77.6068 },
+  { name: 'Koramangala, Bengaluru', latitude: 12.9352, longitude: 77.6245 },
+  { name: 'Indiranagar, Bengaluru', latitude: 12.9784, longitude: 77.6408 },
+  { name: 'Whitefield Tech Park, Bengaluru', latitude: 12.9698, longitude: 77.7499 },
+  { name: 'Electronic City, Bengaluru', latitude: 12.8452, longitude: 77.6602 },
+  { name: 'Manyata Tech Park, Bengaluru', latitude: 13.0500, longitude: 77.6200 },
   { name: 'Kempegowda International Airport', latitude: 13.1986, longitude: 77.7066 },
+  { name: 'HSR Layout, Bengaluru', latitude: 12.9081, longitude: 77.6476 },
+  { name: 'Malleshwaram, Bengaluru', latitude: 12.9986, longitude: 77.5966 },
+  { name: 'T Nagar, Chennai', latitude: 13.0418, longitude: 80.2341 },
+  { name: 'Guindy Industrial Estate, Chennai', latitude: 13.0067, longitude: 80.2020 },
+  { name: 'BKC, Mumbai', latitude: 19.0657, longitude: 72.8686 },
+  { name: 'Cyber City, Gurugram', latitude: 28.4950, longitude: 77.0895 },
+  { name: 'HITEC City, Hyderabad', latitude: 17.4435, longitude: 78.3772 },
 ] as const;
 
 type Coordinate = {
@@ -117,6 +124,9 @@ export default function GeofencesScreen() {
   const [editorTarget, setEditorTarget] = React.useState<'new' | GeofenceDto | null>(null);
   const [locationLoading, setLocationLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState('');
+  const [onlineSuggestions, setOnlineSuggestions] = React.useState<Array<{ name: string; latitude: number; longitude: number }>>([]);
+  const [isSearchingOnline, setIsSearchingOnline] = React.useState(false);
+  const [searchError, setSearchError] = React.useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = React.useState(false);
   const mapRef = React.useRef<MapView>(null);
   const geofences = React.useMemo(() => (Array.isArray(data?.content) ? data.content : []), [data]);
@@ -194,8 +204,55 @@ export default function GeofencesScreen() {
     setEditorTarget(null);
     setLocationLoading(false);
     setSearchText('');
+    setOnlineSuggestions([]);
+    setIsSearchingOnline(false);
+    setSearchError(null);
     setSaveSuccess(false);
   }, []);
+
+  React.useEffect(() => {
+    const query = searchText.trim();
+    if (query.length < 3) {
+      setOnlineSuggestions([]);
+      setIsSearchingOnline(false);
+      setSearchError(null);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(async () => {
+      setIsSearchingOnline(true);
+      setSearchError(null);
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`,
+          { headers: { 'User-Agent': 'GlivtTrackerApp/1.0' } }
+        );
+        if (!res.ok) throw new Error('Network response not ok');
+        const data = await res.json();
+        if (active && Array.isArray(data)) {
+          const parsed = data
+            .map((item: { display_name?: string; lat?: string; lon?: string }) => ({
+              name: item.display_name ? item.display_name.split(',').slice(0, 3).join(',') : query,
+              latitude: parseFloat(item.lat ?? '0'),
+              longitude: parseFloat(item.lon ?? '0'),
+            }))
+            .filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+          setOnlineSuggestions(parsed);
+        }
+      } catch {
+        if (active) {
+          setSearchError('Network unavailable — showing offline places');
+        }
+      } finally {
+        if (active) setIsSearchingOnline(false);
+      }
+    }, 400);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [searchText]);
 
   const locationSuggestions = React.useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -205,59 +262,128 @@ export default function GeofencesScreen() {
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
       return [{ name: geofence.name, latitude: latitude as number, longitude: longitude as number }];
     });
-    return [...existing, ...SEARCH_PLACES]
-      .filter((place) => place.name.toLowerCase().includes(query))
-      .slice(0, 5);
-  }, [geofences, searchText]);
+    const localMatches = [...existing, ...SEARCH_PLACES].filter((place) =>
+      place.name.toLowerCase().includes(query)
+    );
+    const combined = [...localMatches, ...onlineSuggestions];
+    const seen = new Set<string>();
+    return combined.filter((place) => {
+      const key = `${place.name.toLowerCase()}:${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 6);
+  }, [geofences, onlineSuggestions, searchText]);
+
+  const handlePerformSearch = React.useCallback(async () => {
+    const query = searchText.trim();
+    if (!query) return;
+
+    clearErrors(['latitude', 'longitude']);
+
+    if (locationSuggestions.length > 0) {
+      const topMatch = locationSuggestions[0];
+      setSearchText(topMatch.name);
+      setPickedCoordinate({ latitude: topMatch.latitude, longitude: topMatch.longitude }, true);
+      return;
+    }
+
+    setIsSearchingOnline(true);
+    setSearchError(null);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+        { headers: { 'User-Agent': 'GlivtTrackerApp/1.0' } }
+      );
+      if (!res.ok) throw new Error('Network error');
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const placeName = item.display_name ? item.display_name.split(',').slice(0, 3).join(',') : query;
+          setSearchText(placeName);
+          setPickedCoordinate({ latitude: lat, longitude: lng }, true);
+          return;
+        }
+      }
+      setError('latitude', { message: `No location results found for "${query}"` });
+    } catch {
+      setError('latitude', { message: 'Network error performing location search.' });
+    } finally {
+      setIsSearchingOnline(false);
+    }
+  }, [clearErrors, locationSuggestions, setError, setPickedCoordinate, searchText]);
 
   const handleCurrentLocation = React.useCallback(async () => {
     setLocationLoading(true);
+    clearErrors(['latitude', 'longitude']);
     try {
       if (Platform.OS === 'android') {
         const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Location Permission',
+            message: 'Access is needed to pick your current GPS position for the geofence.',
+            buttonPositive: 'Allow',
+          }
         );
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          setError('latitude', { message: 'Location permission was denied.' });
+          setError('latitude', { message: 'Location permission was denied. Please grant location access.' });
           return;
         }
       }
       const geolocation = getGeolocation();
       if (!geolocation) {
-        setError('latitude', { message: 'Current location is unavailable on this device.' });
+        setError('latitude', { message: 'Current location service is unavailable on this device.' });
         return;
       }
-      await new Promise<void>((resolve, reject) => {
-        geolocation.getCurrentPosition(
-          (position) => {
-            setPickedCoordinate(
-              {
+
+      const getPos = (options: PositionOptions) =>
+        new Promise<Coordinate>((resolve, reject) => {
+          geolocation.getCurrentPosition(
+            (position) =>
+              resolve({
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude,
-              },
-              true
-            );
-            resolve();
-          },
-          reject,
-          { enableHighAccuracy: true, maximumAge: 15_000, timeout: 12_000 }
-        );
-      });
-    } catch {
-      setError('latitude', { message: 'Could not read the current GPS location.' });
+              }),
+            (err) => reject(err),
+            options
+          );
+        });
+
+      let coords: Coordinate;
+      try {
+        coords = await getPos({ enableHighAccuracy: true, maximumAge: 10_000, timeout: 8_000 });
+      } catch {
+        // High accuracy timeout or failure — fallback to lower accuracy
+        coords = await getPos({ enableHighAccuracy: false, maximumAge: 30_000, timeout: 10_000 });
+      }
+
+      setPickedCoordinate(coords, true);
+      setSearchText('Current Location');
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 1
+          ? 'Location permission was denied.'
+          : 'Could not retrieve current GPS position. Please check your location settings.';
+      setError('latitude', { message: msg });
     } finally {
       setLocationLoading(false);
     }
-  }, [setError, setPickedCoordinate]);
+  }, [clearErrors, setError, setPickedCoordinate]);
 
   const onApproveSuggestion = async (id: number) => {
     if (approvingId != null || !Number.isSafeInteger(id) || id <= 0) return;
     setApprovingId(id);
     try {
       const created = await approveSuggestion(id).unwrap();
-      Alert.alert('Geofence created', `${created?.name || 'Suggested geofence'} is now active.`);
+      await Promise.allSettled([refetch(), refetchAi()]);
+      const name = created?.name || 'Suggested geofence';
+      Alert.alert('Geofence created', `"${name}" has been approved and added to your active geofences.`);
     } catch (err) {
-      Alert.alert('Geofence not created', apiErrorMessage(err));
+      Alert.alert('Geofence not created', apiErrorMessage(err, 'Failed to approve geofence suggestion.'));
     } finally {
       setApprovingId(null);
     }
@@ -518,33 +644,61 @@ export default function GeofencesScreen() {
                 <TextField
                   autoCapitalize="words"
                   label="Search location"
-                  onChangeText={setSearchText}
-                  placeholder="Search saved zones or Bengaluru places"
+                  leftIcon="magnify"
+                  onChangeText={(text) => {
+                    setSearchText(text);
+                    clearErrors(['latitude', 'longitude']);
+                  }}
+                  onLeftIconPress={handlePerformSearch}
+                  onSubmitEditing={handlePerformSearch}
+                  placeholder="Search saved zones or places..."
+                  returnKeyType="search"
                   value={searchText}
                 />
-                {locationSuggestions.length > 0 ? (
+                {searchText.trim().length > 0 ? (
                   <View style={styles.suggestionList}>
-                    {locationSuggestions.map((place) => (
-                      <Pressable
-                        accessibilityLabel={`Use ${place.name}`}
-                        accessibilityRole="button"
-                        key={`${place.name}-${place.latitude}-${place.longitude}`}
-                        onPress={() => {
-                          setSearchText(place.name);
-                          setPickedCoordinate(place, true);
-                        }}
-                        style={styles.locationSuggestion}>
-                        <MaterialCommunityIcons color={c.primary} name="map-marker-outline" size={17} />
-                        <View style={styles.locationSuggestionText}>
-                          <Text numberOfLines={1} style={styles.locationSuggestionName}>
-                            {place.name}
-                          </Text>
-                          <Text style={styles.locationSuggestionMeta}>
-                            {place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    ))}
+                    {isSearchingOnline ? (
+                      <View style={styles.searchStatusRow}>
+                        <ActivityIndicator color={c.primary} size="small" />
+                        <Text style={styles.searchStatusText}>Searching online places...</Text>
+                      </View>
+                    ) : null}
+                    {locationSuggestions.length > 0 ? (
+                      locationSuggestions.map((place) => (
+                        <Pressable
+                          accessibilityLabel={`Use ${place.name}`}
+                          accessibilityRole="button"
+                          key={`${place.name}-${place.latitude}-${place.longitude}`}
+                          onPress={() => {
+                            setSearchText(place.name);
+                            clearErrors(['latitude', 'longitude']);
+                            setPickedCoordinate({ latitude: place.latitude, longitude: place.longitude }, true);
+                          }}
+                          style={styles.locationSuggestion}>
+                          <MaterialCommunityIcons color={c.primary} name="map-marker-outline" size={17} />
+                          <View style={styles.locationSuggestionText}>
+                            <Text numberOfLines={1} style={styles.locationSuggestionName}>
+                              {place.name}
+                            </Text>
+                            <Text style={styles.locationSuggestionMeta}>
+                              {place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}
+                            </Text>
+                          </View>
+                          <MaterialCommunityIcons color={c.textMuted} name="chevron-right" size={16} />
+                        </Pressable>
+                      ))
+                    ) : !isSearchingOnline && searchText.trim().length >= 2 ? (
+                      <View style={styles.noResultsBox}>
+                        <MaterialCommunityIcons color={c.textMuted} name="map-marker-off-outline" size={18} />
+                        <Text style={styles.noResultsText}>No places found for "{searchText}"</Text>
+                      </View>
+                    ) : null}
+                    {searchError ? (
+                      <View style={styles.searchErrorBox}>
+                        <MaterialCommunityIcons color={c.textMuted} name="cloud-off-outline" size={14} />
+                        <Text style={styles.searchErrorText}>{searchError}</Text>
+                      </View>
+                    ) : null}
                   </View>
                 ) : null}
                 <Pressable
@@ -872,6 +1026,32 @@ const makeStyles = (c: ThemeColors) =>
     locationSuggestionText: { flex: 1, minWidth: 0 },
     locationSuggestionName: { color: c.textPrimary, fontSize: typography.caption, fontWeight: '800' },
     locationSuggestionMeta: { color: c.textMuted, fontSize: 11, marginTop: 1 },
+    searchStatusRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs + 2,
+    },
+    searchStatusText: { color: c.textSecondary, fontSize: typography.caption },
+    noResultsBox: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+    },
+    noResultsText: { color: c.textMuted, fontSize: typography.caption },
+    searchErrorBox: {
+      alignItems: 'center',
+      borderTopColor: c.border,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 6,
+    },
+    searchErrorText: { color: c.textMuted, fontSize: 11 },
     currentLocationButton: {
       alignItems: 'center',
       alignSelf: 'flex-start',
