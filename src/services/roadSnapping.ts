@@ -22,10 +22,22 @@
 export type SnappedPoint = {
   latitude: number;
   longitude: number;
-  /** Compass bearing in degrees [0, 360). */
+  /**
+   * Compass bearing in degrees [0, 360).
+   *
+   * This is ALWAYS the caller's own `rawHeading`, passed straight back. Snapping
+   * corrects position, never direction: OSRM's /nearest reports where the road is,
+   * not which way this vehicle is travelling along it.
+   */
   bearing: number;
   /** True when the coordinate was snapped to a road network node. */
   snapped: boolean;
+};
+
+/** Cached snap result. Position only - deliberately carries no heading (see below). */
+type CachedSnap = {
+  latitude: number;
+  longitude: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -38,14 +50,21 @@ const OSRM_BASE = 'https://router.project-osrm.org/nearest/v1/driving';
 // LRU cache (max 512 entries, keyed by "lat4:lng4")
 // ---------------------------------------------------------------------------
 
+// The cache key is a ~11 m grid cell, so it is SHARED by every vehicle that passes
+// through that cell, in either direction, at any time. It therefore stores position
+// only. It previously stored the heading of whichever vehicle happened to snap the
+// cell first, which every later caller then inherited - so a vehicle driving back
+// down the same road, or a second vehicle heading the other way, was rendered facing
+// exactly backwards. Direction of travel is per-vehicle state and can never be
+// cached per location.
 const CACHE_MAX = 512;
-const cache = new Map<string, SnappedPoint>();
+const cache = new Map<string, CachedSnap>();
 
 function cacheKey(lat: number, lng: number): string {
   return `${lat.toFixed(4)}:${lng.toFixed(4)}`;
 }
 
-function cacheGet(lat: number, lng: number): SnappedPoint | undefined {
+function cacheGet(lat: number, lng: number): CachedSnap | undefined {
   const k = cacheKey(lat, lng);
   const hit = cache.get(k);
   if (hit) {
@@ -56,7 +75,7 @@ function cacheGet(lat: number, lng: number): SnappedPoint | undefined {
   return hit;
 }
 
-function cacheSet(lat: number, lng: number, point: SnappedPoint): void {
+function cacheSet(lat: number, lng: number, point: CachedSnap): void {
   const k = cacheKey(lat, lng);
   if (cache.size >= CACHE_MAX) {
     // Evict oldest entry
@@ -66,26 +85,9 @@ function cacheSet(lat: number, lng: number, point: SnappedPoint): void {
   cache.set(k, point);
 }
 
-// ---------------------------------------------------------------------------
-// Haversine bearing utility
-// ---------------------------------------------------------------------------
-
-function bearingDeg(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLng = toRad(lng2 - lng1);
-  const φ1 = toRad(lat1);
-  const φ2 = toRad(lat2);
-  const y = Math.sin(dLng) * Math.cos(φ2);
-  const x =
-    Math.cos(φ1) * Math.sin(φ2) -
-    Math.sin(φ1) * Math.cos(φ2) * Math.cos(dLng);
-  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-}
+// This module no longer computes bearings. Direction of travel is resolved from a
+// vehicle's own consecutive fixes by `resolveTravelHeading` in geoMath, which is the
+// only place that has the per-vehicle history needed to get it right.
 
 // ---------------------------------------------------------------------------
 // Background OSRM fetch (populates cache; never throws)
@@ -93,7 +95,7 @@ function bearingDeg(
 
 const inFlight = new Set<string>();
 
-function fetchAndCache(lat: number, lng: number, rawHeading: number): void {
+function fetchAndCache(lat: number, lng: number): void {
   const k = cacheKey(lat, lng);
   if (inFlight.has(k)) return;
   inFlight.add(k);
@@ -108,13 +110,7 @@ function fetchAndCache(lat: number, lng: number, rawHeading: number): void {
         const dist = haversineM(lat, lng, snapLat, snapLng);
         // Reject snaps > 50 m from original — likely wrong road
         if (dist <= 50) {
-          const snapped: SnappedPoint = {
-            latitude: snapLat,
-            longitude: snapLng,
-            bearing: Number.isFinite(rawHeading) ? rawHeading : 0,
-            snapped: true,
-          };
-          cacheSet(lat, lng, snapped);
+          cacheSet(lat, lng, { latitude: snapLat, longitude: snapLng });
         }
       }
     })
@@ -153,6 +149,10 @@ function haversineM(
 /**
  * Synchronously snap a GPS coordinate to the nearest drivable road.
  *
+ * Only the POSITION is corrected. `bearing` is returned exactly as supplied,
+ * because the direction a vehicle is travelling along a road is per-vehicle state
+ * that a location-keyed cache cannot represent.
+ *
  * @param lat        Raw GPS latitude
  * @param lng        Raw GPS longitude
  * @param rawHeading Vehicle heading from GPS (degrees, may be 0 when stopped)
@@ -168,12 +168,19 @@ export function snapCoordinateToRoadSync(
     return { latitude: lat, longitude: lng, bearing: rawHeading, snapped: false };
   }
 
-  // 2. Cache hit → return immediately
+  // 2. Cache hit → snapped position, but ALWAYS this caller's own heading.
   const cached = cacheGet(lat, lng);
-  if (cached) return cached;
+  if (cached) {
+    return {
+      latitude: cached.latitude,
+      longitude: cached.longitude,
+      bearing: Number.isFinite(rawHeading) ? rawHeading : 0,
+      snapped: true,
+    };
+  }
 
   // 3. Trigger background fetch for next time
-  fetchAndCache(lat, lng, rawHeading);
+  fetchAndCache(lat, lng);
 
   // 4. Fallback: return raw GPS (snapped = false)
   return {

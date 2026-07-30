@@ -24,6 +24,7 @@ import type {
   ReportDto,
   SettingsDto,
   TenantConfig,
+  TenantSummary,
   TokenResponse,
 } from '@/src/types/api';
 // Type-only import (erased at compile time), so no runtime import cycle with
@@ -70,6 +71,10 @@ const DEMO_TENANT: TenantConfig = {
 const DEMO_USER: AuthUser = {
   id: 1,
   tenantId: 1,
+  homeTenantId: 1,
+  tenantCode: 'DEMO',
+  tenantName: 'Glivt Demo Fleet',
+  companyName: 'Glivt Demo Logistics Pvt Ltd',
   username: 'admin',
   name: 'Demo Admin',
   email: 'admin@example.com',
@@ -774,6 +779,29 @@ function demoDispatch(): DispatchRecommendResponseDto {
   };
 }
 
+/** The demo tenant as a Manage Tenants row; always the caller's current tenant. */
+function demoTenantRow(): TenantSummary {
+  return {
+    id: DEMO_USER.tenantId,
+    tenantId: DEMO_TENANT.companyCode,
+    name: DEMO_TENANT.name,
+    companyName: DEMO_USER.companyName ?? DEMO_TENANT.name,
+    adminName: DEMO_USER.name,
+    adminEmail: DEMO_USER.email ?? null,
+    adminPhone: DEMO_TENANT.supportPhone ?? null,
+    status: DEMO_TENANT.status,
+    appName: DEMO_TENANT.appName,
+    logoUrl: DEMO_TENANT.logoUrl ?? null,
+    primaryColor: DEMO_TENANT.primaryColor,
+    secondaryColor: DEMO_TENANT.secondaryColor,
+    createdAt: new Date(NOW - 90 * 24 * 3600 * 1000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+    current: true,
+    canDelete: false,
+    deleteBlockedReason: 'This is your active tenant',
+  };
+}
+
 /** Canned baseQuery that serves demo data for the shell endpoints. */
 const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryError> = async (
   args
@@ -792,6 +820,69 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   }
   if (url === '/auth/logout') {
     return envelope(null);
+  }
+  // Tenant management in the offline demo.
+  //
+  // The list is served so Manage Tenants renders its real UI against the one demo
+  // tenant. Creating, editing, deleting and switching are NOT simulated: they are
+  // transactional server operations with authorisation, provisioning and audit
+  // behaviour that a canned response cannot honestly stand in for, so the demo
+  // reports plainly that a backend is required instead of faking success.
+  if (url === '/tenants') {
+    if (method !== 'GET') {
+      return {
+        error: {
+          status: 501,
+          data: {
+            success: false,
+            error: {
+              code: 'DEMO_UNSUPPORTED',
+              message: 'Tenant management needs a live backend; it is not available in demo mode.',
+            },
+          },
+        } as FetchBaseQueryError,
+      };
+    }
+    return envelope({
+      content: [demoTenantRow()],
+      page: 0,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+      first: true,
+      last: true,
+    });
+  }
+  if (/^\/tenants\/\d+/.test(url)) {
+    if (/\/switch$/.test(url)) {
+      return {
+        error: {
+          status: 501,
+          data: {
+            success: false,
+            error: {
+              code: 'DEMO_UNSUPPORTED',
+              message: 'Tenant switching needs a live backend; it is not available in demo mode.',
+            },
+          },
+        } as FetchBaseQueryError,
+      };
+    }
+    if (method === 'GET') {
+      return envelope(demoTenantRow());
+    }
+    return {
+      error: {
+        status: 501,
+        data: {
+          success: false,
+          error: {
+            code: 'DEMO_UNSUPPORTED',
+            message: 'Tenant management needs a live backend; it is not available in demo mode.',
+          },
+        },
+      } as FetchBaseQueryError,
+    };
   }
   if (url === '/dashboard/summary') {
     return envelope(demoSummary());

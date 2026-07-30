@@ -15,16 +15,79 @@ import {
   normalizeCompanyCode,
 } from '@/src/services/tenantIdentity';
 import { clearSession, setCredentials, type AuthState } from '@/src/store/authSlice';
+import type { TenantState } from '@/src/store/tenantSlice';
 import type { ApiResponse, TokenResponse } from '@/src/types/api';
 
-type StateShape = { auth: AuthState };
+type StateShape = { auth: AuthState; tenant: TenantState };
+
+/** Header the backend compares against the tenant signed into the access token. */
+const TENANT_HEADER = 'X-Tenant-Id';
+
+/** Error surfaced when a response outlived the tenant it was requested for. */
+const TENANT_CHANGED_ERROR = 'TENANT_CHANGED';
+
+// ---------------------------------------------------------------------------
+// In-flight request tracking
+//
+// Switching tenants must cancel every request already on the wire. A response for
+// the previous tenant that lands after the switch would otherwise be written into
+// the cache the new tenant's screens are reading. `fetchBaseQuery` does not expose
+// its abort signal, so requests are routed through a custom `fetchFn` that keeps
+// its own controller per request and chains the upstream signal onto it.
+// ---------------------------------------------------------------------------
+const inFlight = new Set<AbortController>();
+
+/** Aborts every request currently on the wire. Called at the start of a switch. */
+export function abortInFlightRequests(): void {
+  const controllers = Array.from(inFlight);
+  inFlight.clear();
+  for (const controller of controllers) {
+    try {
+      controller.abort();
+    } catch {
+      // Already settled; nothing to cancel.
+    }
+  }
+}
+
+const cancellableFetch: typeof fetch = (input, init) => {
+  const controller = new AbortController();
+  inFlight.add(controller);
+
+  const upstream = init?.signal;
+  if (upstream) {
+    if (upstream.aborted) {
+      controller.abort();
+    } else {
+      upstream.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  return fetch(input as RequestInfo, { ...init, signal: controller.signal }).finally(() => {
+    inFlight.delete(controller);
+  });
+};
 
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: env.apiBaseUrl,
+  fetchFn: cancellableFetch,
   prepareHeaders: (headers, { getState }) => {
-    const auth = (getState() as StateShape).auth;
-    if (hasValidTenantSession(auth)) {
-      headers.set('Authorization', `Bearer ${auth.accessToken}`);
+    const state = getState() as StateShape;
+    if (hasValidTenantSession(state.auth)) {
+      headers.set('Authorization', `Bearer ${state.auth.accessToken}`);
+    }
+    // Declaring the tenant the client believes is active lets the backend reject a
+    // request whose token belongs to a different tenant, instead of quietly serving
+    // it. This is a consistency check, never a grant: the tenant that actually
+    // scopes the query is the one signed into the token.
+    //
+    // It is read from `auth.user`, the same slice as the token, so the two are always
+    // written by a single reducer and can never disagree. Reading it from the tenant
+    // slice would leave a window during a switch where the new token travels with the
+    // previous tenant's id and the backend rejects the caller's own request.
+    const activeTenantId = state.auth.user?.tenantId;
+    if (Number.isSafeInteger(activeTenantId) && (activeTenantId as number) > 0) {
+      headers.set(TENANT_HEADER, String(activeTenantId));
     }
     return headers;
   },
@@ -33,6 +96,12 @@ const rawBaseQuery = fetchBaseQuery({
 function isAuthEndpoint(args: string | FetchArgs): boolean {
   const url = typeof args === 'string' ? args : args.url;
   return url.startsWith('/auth/') || url.startsWith('/tenant/');
+}
+
+/** Tenant switching itself must not be discarded by the stale-tenant guard. */
+function isTenantSwitchEndpoint(args: string | FetchArgs): boolean {
+  const url = typeof args === 'string' ? args : args.url;
+  return url.startsWith('/tenants');
 }
 
 type SessionSnapshot = {
@@ -148,10 +217,33 @@ const hybridBaseQuery: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQueryEr
   api,
   extraOptions
 ) => {
-  if (env.demoMode) {
-    return demoBaseQuery(args, api, extraOptions);
+  // The tenant this request was issued for. Captured BEFORE the request so a switch
+  // that happens while it is in flight is detectable when it comes back.
+  const before = (api.getState() as StateShape).tenant;
+  const issuedEpoch = before?.epoch ?? 0;
+  const issuedTenantId = before?.activeTenantId ?? null;
+
+  const result = env.demoMode
+    ? await demoBaseQuery(args, api, extraOptions)
+    : await baseQueryWithReauth(args, api, extraOptions);
+
+  // Discard anything that outlived its tenant. Without this a slow response for the
+  // previous tenant could repopulate a cache the new tenant's screens are rendering
+  // from — exactly the flash of stale vehicles/counts a switch must never show.
+  const after = (api.getState() as StateShape).tenant;
+  const tenantChanged =
+    (after?.epoch ?? 0) !== issuedEpoch || (after?.activeTenantId ?? null) !== issuedTenantId;
+  if (tenantChanged && !isTenantSwitchEndpoint(args) && !isAuthEndpoint(args)) {
+    return {
+      error: {
+        status: 'CUSTOM_ERROR',
+        error: TENANT_CHANGED_ERROR,
+        data: TENANT_CHANGED_ERROR,
+      } as FetchBaseQueryError,
+    };
   }
-  return baseQueryWithReauth(args, api, extraOptions);
+
+  return result;
 };
 
 export const baseApi = createApi({

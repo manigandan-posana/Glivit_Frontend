@@ -61,6 +61,29 @@ export function vehicleMarkerSource(category?: string | null, state?: string | n
   return VEHICLE_MARKER_IMAGES[vehicleMarkerKey(category, state)] ?? VEHICLE_MARKER_IMAGES.veh_car;
 }
 
+/**
+ * Per-artwork rotation offset, in degrees.
+ *
+ * Each marker PNG is drawn with its nose pointing in a fixed direction. To display a
+ * compass heading H the image is rotated by `H + offset`, so the offset must cancel
+ * the artwork's own direction:
+ *
+ *     offset = (360 - directionTheArtworkFaces) % 360
+ *
+ * i.e. artwork facing north (up) -> 0, east (right) -> 270, south (down) -> 180,
+ * west (left) -> 90.
+ *
+ * The values below were set from the measured principal axis of each asset's alpha
+ * mask (length : width ≈ 2:1, so the long axis is unambiguous):
+ *
+ *     veh_bike                     axis 172deg -> vertical,   nose up    -> 0
+ *     veh_truck/suv/van/bus/auto   axis   0deg -> vertical,   nose down  -> 180
+ *     veh_car, car_*               axis  90deg -> horizontal, nose left  -> 90
+ *
+ * A missing entry means "no rotation", which is only correct for north-facing
+ * artwork. veh_suv and veh_van were previously absent and therefore rendered 180deg
+ * backwards: they are the same vertical, south-facing render family as veh_truck.
+ */
 const HEADING_OFFSET_BY_KEY: Record<string, number> = {
   car_expired: 90,
   car_idle: 90,
@@ -69,10 +92,13 @@ const HEADING_OFFSET_BY_KEY: Record<string, number> = {
   car_running: 90,
   car_stopped: 90,
   veh_auto: 180,
+  veh_bike: 0,
   veh_bus: 180,
   veh_car: 90,
   veh_excavator: 180,
+  veh_suv: 180,
   veh_truck: 180,
+  veh_van: 180,
 };
 
 export function normalizeHeading(heading?: number | null): number {

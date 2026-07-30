@@ -19,6 +19,11 @@ const KEYS = {
   user: 'glivt.user',
   companyCode: 'glivt.companyCode',
   tenantConfig: 'glivt.tenantConfig',
+  // The tenant the ACCOUNT belongs to, kept separately from the tenant currently
+  // being viewed so a restart after a tenant switch still knows which company code
+  // the user actually signs in with.
+  homeCompanyCode: 'glivt.homeCompanyCode',
+  homeTenantConfig: 'glivt.homeTenantConfig',
 } as const;
 
 export type PersistedAuth = {
@@ -28,6 +33,8 @@ export type PersistedAuth = {
   user: AuthUser | null;
   companyCode: string | null;
   tenantConfig: TenantConfig | null;
+  homeCompanyCode: string | null;
+  homeTenantConfig: TenantConfig | null;
 };
 
 async function setOrDelete(key: string, value: string | null) {
@@ -95,7 +102,34 @@ export const authStorage = {
     });
   },
 
+  /**
+   * Persists the tenant selected before login. That selection IS the home tenant,
+   * so it is recorded as both the active and the home tenant.
+   */
   async saveTenant(companyCode: string, tenantConfig: TenantConfig) {
+    const normalizedCode = normalizeCompanyCode(companyCode);
+    if (
+      !normalizedCode ||
+      !hasValidTenantSelection({ companyCode: normalizedCode, tenantConfig })
+    ) {
+      throw new Error('Invalid tenant configuration');
+    }
+    const payload = JSON.stringify({ ...tenantConfig, companyCode: normalizedCode });
+    await mutate(async () => {
+      await SecureStore.setItemAsync(KEYS.companyCode, normalizedCode);
+      await SecureStore.setItemAsync(KEYS.tenantConfig, payload);
+      await SecureStore.setItemAsync(KEYS.homeCompanyCode, normalizedCode);
+      await SecureStore.setItemAsync(KEYS.homeTenantConfig, payload);
+    });
+  },
+
+  /**
+   * Persists the tenant a switch moved into, leaving the home tenant untouched.
+   *
+   * Kept separate from {@link saveTenant} on purpose: a switch changes which tenant
+   * is being viewed, never which tenant owns the login.
+   */
+  async saveActiveTenant(companyCode: string, tenantConfig: TenantConfig) {
     const normalizedCode = normalizeCompanyCode(companyCode);
     if (
       !normalizedCode ||
@@ -124,21 +158,33 @@ export const authStorage = {
       await Promise.all([
         setOrDelete(KEYS.companyCode, null),
         setOrDelete(KEYS.tenantConfig, null),
+        setOrDelete(KEYS.homeCompanyCode, null),
+        setOrDelete(KEYS.homeTenantConfig, null),
       ]);
     });
   },
 
   async load(): Promise<PersistedAuth> {
     await mutationQueue.catch(() => undefined);
-    const [accessToken, refreshToken, sessionCompanyCode, userRaw, companyCode, tenantRaw] =
-      await Promise.all([
-        SecureStore.getItemAsync(KEYS.accessToken),
-        SecureStore.getItemAsync(KEYS.refreshToken),
-        SecureStore.getItemAsync(KEYS.sessionCompanyCode),
-        SecureStore.getItemAsync(KEYS.user),
-        SecureStore.getItemAsync(KEYS.companyCode),
-        SecureStore.getItemAsync(KEYS.tenantConfig),
-      ]);
+    const [
+      accessToken,
+      refreshToken,
+      sessionCompanyCode,
+      userRaw,
+      companyCode,
+      tenantRaw,
+      homeCompanyCode,
+      homeTenantRaw,
+    ] = await Promise.all([
+      SecureStore.getItemAsync(KEYS.accessToken),
+      SecureStore.getItemAsync(KEYS.refreshToken),
+      SecureStore.getItemAsync(KEYS.sessionCompanyCode),
+      SecureStore.getItemAsync(KEYS.user),
+      SecureStore.getItemAsync(KEYS.companyCode),
+      SecureStore.getItemAsync(KEYS.tenantConfig),
+      SecureStore.getItemAsync(KEYS.homeCompanyCode),
+      SecureStore.getItemAsync(KEYS.homeTenantConfig),
+    ]);
     const persisted: PersistedAuth = {
       accessToken,
       refreshToken,
@@ -146,6 +192,8 @@ export const authStorage = {
       user: safeParse<AuthUser>(userRaw),
       companyCode: normalizeCompanyCode(companyCode),
       tenantConfig: safeParse<TenantConfig>(tenantRaw),
+      homeCompanyCode: normalizeCompanyCode(homeCompanyCode),
+      homeTenantConfig: safeParse<TenantConfig>(homeTenantRaw),
     };
 
     if (!hasValidTenantSelection(persisted)) {
@@ -157,6 +205,8 @@ export const authStorage = {
         user: null,
         companyCode: null,
         tenantConfig: null,
+        homeCompanyCode: null,
+        homeTenantConfig: null,
       };
     }
 

@@ -47,7 +47,14 @@ export type TenantConfig = {
 
 export type AuthUser = {
   id: number;
+  /** The ACTIVE tenant this session acts inside. Changes when the user switches tenant. */
   tenantId: number;
+  /** The tenant that owns the login. Never changes. */
+  homeTenantId?: number | null;
+  /** Company code of the active tenant. */
+  tenantCode?: string | null;
+  tenantName?: string | null;
+  companyName?: string | null;
   username: string;
   name: string;
   email?: string | null;
@@ -61,6 +68,59 @@ export type TokenResponse = {
   tokenType: string;
   expiresInSeconds: number;
   user: AuthUser;
+};
+
+export type TenantStatus = 'ACTIVE' | 'DISABLED' | 'MAINTENANCE';
+
+/** A row in the Manage Tenants list (backend TenantDto). */
+export type TenantSummary = {
+  id: number;
+  /** The tenant's unique public identifier, used as the login company code. */
+  tenantId: string;
+  name: string;
+  companyName: string;
+  adminName?: string | null;
+  adminEmail?: string | null;
+  adminPhone?: string | null;
+  status: string;
+  appName?: string | null;
+  logoUrl?: string | null;
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  /** True for the caller's currently active tenant. */
+  current: boolean;
+  /** The server's verdict; the UI must not offer a delete it will refuse. */
+  canDelete: boolean;
+  deleteBlockedReason?: string | null;
+};
+
+export type TenantCreateRequest = {
+  name: string;
+  tenantId: string;
+  companyName: string;
+  adminName: string;
+  adminEmail: string;
+  adminPhone: string;
+  password: string;
+  confirmPassword: string;
+  status: TenantStatus;
+};
+
+export type TenantUpdateRequest = {
+  name: string;
+  companyName: string;
+  adminName: string;
+  adminEmail: string;
+  adminPhone: string;
+  status: TenantStatus;
+};
+
+export type TenantSwitchResponse = {
+  session: TokenResponse;
+  tenant: TenantConfig;
+  activeTenant: TenantSummary;
 };
 
 export type DashboardSummary = {

@@ -19,6 +19,7 @@ import type { LivePositionEvent } from './livePositions';
  * Seeded from the device list so every authorised vehicle shows immediately.
  */
 
+import { resolveTravelHeading } from '@/src/services/geoMath';
 import { snapCoordinateToRoadSync } from './roadSnapping';
 import { getSimulatedVehicle } from './vehicleSimulator';
 
@@ -44,15 +45,25 @@ export type FleetLive = {
 const MOVING_STATES = new Set(['RUNNING', 'IDLE']);
 const DEMO_STEP_MS = 1200;
 
-function makeTarget(v: DeviceSummary): FleetTarget | null {
+function makeTarget(v: DeviceSummary, previous?: FleetTarget): FleetTarget | null {
   if (v.latitude == null || v.longitude == null) return null;
   const snap = snapCoordinateToRoadSync(v.latitude, v.longitude, v.course);
+  const latitude = snap.snapped ? snap.latitude : v.latitude;
+  const longitude = snap.snapped ? snap.longitude : v.longitude;
   return {
     deviceId: v.id,
-    latitude: snap.snapped ? snap.latitude : v.latitude,
-    longitude: snap.snapped ? snap.longitude : v.longitude,
+    latitude,
+    longitude,
     speed: v.speed,
-    heading: snap.snapped ? snap.bearing : v.course,
+    // Direction of travel, derived from movement since this vehicle's own previous
+    // coordinate. Never from the snapped road bearing, which is direction-agnostic.
+    heading: resolveTravelHeading({
+      previous,
+      latitude,
+      longitude,
+      reportedCourse: v.course,
+      lastHeading: previous?.heading,
+    }),
     state: v.state,
     moving: MOVING_STATES.has(v.state),
     updatedAt: Date.now(),
@@ -61,16 +72,26 @@ function makeTarget(v: DeviceSummary): FleetTarget | null {
 
 export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): FleetLive {
   const token = useAppSelector((s) => s.auth.accessToken);
+  const tenantEpoch = useAppSelector((s) => s.tenant.epoch);
   const targetsRef = useRef<Map<number, FleetTarget>>(new Map());
   const [connected, setConnected] = useState(false);
   const [vehicleCount, setVehicleCount] = useState(0);
+
+  // A tenant switch clears the marker map itself, not just the subscription. The
+  // animation loop reads this ref directly, so leaving the previous tenant's targets
+  // in place would keep their vehicles on the map until the new list arrived.
+  useEffect(() => {
+    targetsRef.current.clear();
+    setVehicleCount(0);
+    setConnected(false);
+  }, [tenantEpoch]);
 
   // Seed / merge the known vehicles from the device list.
   useEffect(() => {
     const map = targetsRef.current;
     let changed = false;
     for (const v of seed) {
-      const target = makeTarget(v);
+      const target = makeTarget(v, map.get(v.id));
       if (!target) continue;
       if (!map.has(v.id)) {
         map.set(v.id, target);
@@ -129,15 +150,28 @@ export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): Fl
           return;
         }
         const map = targetsRef.current;
-        const existed = map.has(event.deviceId);
-        const state = event.state ?? map.get(event.deviceId)?.state ?? 'NO_DATA';
+        const previous = map.get(event.deviceId);
+        const existed = previous != null;
+        const state = event.state ?? previous?.state ?? 'NO_DATA';
         const snap = snapCoordinateToRoadSync(event.latitude, event.longitude, event.course);
+        const latitude = snap.snapped ? snap.latitude : event.latitude;
+        const longitude = snap.snapped ? snap.longitude : event.longitude;
         map.set(event.deviceId, {
           deviceId: event.deviceId,
-          latitude: snap.snapped ? snap.latitude : event.latitude,
-          longitude: snap.snapped ? snap.longitude : event.longitude,
+          latitude,
+          longitude,
           speed: event.speed,
-          heading: snap.snapped ? snap.bearing : event.course,
+          // Bearing from this vehicle's previous fix to the new one. A fix that has
+          // barely moved, or one with poor reported accuracy, holds the current
+          // heading instead of turning the marker on GPS noise.
+          heading: resolveTravelHeading({
+            previous,
+            latitude,
+            longitude,
+            reportedCourse: event.course,
+            accuracyMeters: event.accuracyMeters ?? null,
+            lastHeading: previous?.heading,
+          }),
           state,
           moving: MOVING_STATES.has(state),
           updatedAt: Date.now(),
@@ -146,8 +180,10 @@ export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): Fl
       },
     });
 
+    // Unsubscribes from the previous tenant's fleet stream on a switch, then
+    // reconnects under the new tenant's token.
     return () => connection.close();
-  }, [enabled, token]);
+  }, [enabled, token, tenantEpoch]);
 
   return { targetsRef, connected, vehicleCount };
 }

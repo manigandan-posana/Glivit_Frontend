@@ -1,5 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
+import { clearActiveTenant, switchFailed, switchSucceeded } from '@/src/store/tenantSlice';
+
 /**
  * Local read-state for the in-app notification panel.
  *
@@ -27,6 +29,15 @@ const notificationsSlice = createSlice({
     markNotificationsRead(state, action: PayloadAction<string[]>) {
       for (const key of action.payload) state.readKeys[key] = true;
     },
+  },
+  extraReducers: (builder) => {
+    // Read-markers are keys built from tenant-owned record ids (event:<id>,
+    // maint:<id>), so they are meaningless — and actively misleading — in another
+    // tenant. Changing tenant discards them all.
+    builder
+      .addCase(switchSucceeded, () => initialState)
+      .addCase(switchFailed, () => initialState)
+      .addCase(clearActiveTenant, () => initialState);
   },
 });
 

@@ -9,12 +9,13 @@ import { Provider } from 'react-redux';
 
 import { authStorage } from '@/src/services/authStorage';
 import { preloadVehicleModels } from '@/src/components/Vehicle3DMarker';
+import { TenantSwitchOverlay } from '@/src/components/TenantSwitchOverlay';
 import { hydrate } from '@/src/store/authSlice';
+import { adoptSessionTenant } from '@/src/store/tenantSlice';
 import {
   useAppDispatch,
   useAuth,
-  useHasTenant,
-  useIsAuthenticated,
+  useTenantSwitchState,
 } from '@/src/store/hooks';
 import { store } from '@/src/store/store';
 import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
@@ -40,10 +41,17 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
         const persisted = await authStorage.load();
         if (active) {
           dispatch(hydrate(persisted));
+          // Restore the active tenant from the persisted SESSION, not from a
+          // separately remembered id. The tenant is signed into the stored access
+          // token and re-authorised by the backend on the first request, so a tenant
+          // whose access has since been revoked cannot be restored: that request
+          // fails and the session is cleared.
+          dispatch(adoptSessionTenant(persisted.user));
         }
       } catch {
         if (active) {
           dispatch(hydrate({}));
+          dispatch(adoptSessionTenant(null));
         }
       } finally {
         await SplashScreen.hideAsync().catch(() => undefined);
@@ -55,6 +63,19 @@ function Bootstrapper({ children }: { children: React.ReactNode }) {
   }, [dispatch]);
 
   return <>{children}</>;
+}
+
+/**
+ * The switching loader lives at the root, above the navigator.
+ *
+ * A tenant switch remounts the authenticated navigator (it is keyed on the tenant
+ * epoch), so an overlay rendered inside it would disappear mid-transition and expose
+ * a half-initialised app. Rendering it here keeps the screen covered from the moment
+ * Yes is tapped until the new tenant's Live Map has been navigated to.
+ */
+function TenantSwitchGate() {
+  const { status, pendingTenantName } = useTenantSwitchState();
+  return <TenantSwitchOverlay tenantName={pendingTenantName} visible={status === 'switching'} />;
 }
 
 function RootNavigator() {
@@ -83,6 +104,7 @@ export default function RootLayout() {
           <ThemeProvider>
             <Bootstrapper>
               <RootNavigator />
+              <TenantSwitchGate />
             </Bootstrapper>
             <ThemedStatusBar />
           </ThemeProvider>

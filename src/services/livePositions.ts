@@ -331,12 +331,16 @@ function applyLiveEvent(
 
 export function useLivePositions(deviceId?: number, enabled = true): LivePositionsState {
   const token = useAppSelector((s) => s.auth.accessToken);
+  // Device ids are tenant-owned, so a tenant switch invalidates the whole buffer:
+  // the accumulated live route, the last fix and the connection all belong to the
+  // previous tenant and must not be drawn under the new one.
+  const tenantEpoch = useAppSelector((s) => s.tenant.epoch);
   const [state, setState] = useState<LivePositionsState>(EMPTY);
 
-  // Reset accumulation whenever the target device changes.
+  // Reset accumulation whenever the target device or the active tenant changes.
   useEffect(() => {
     setState(EMPTY);
-  }, [deviceId]);
+  }, [deviceId, tenantEpoch]);
 
   useEffect(() => {
     if (!enabled || deviceId == null) {
@@ -381,8 +385,10 @@ export function useLivePositions(deviceId?: number, enabled = true): LivePositio
       },
     });
 
+    // Closing on tenantEpoch change is what unsubscribes from the previous tenant's
+    // GPS stream; the effect then reopens it with the new tenant's token.
     return () => connection.close();
-  }, [enabled, deviceId, token]);
+  }, [enabled, deviceId, token, tenantEpoch]);
 
   return state;
 }

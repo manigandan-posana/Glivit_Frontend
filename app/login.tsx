@@ -27,6 +27,7 @@ import { useLoginMutation } from '@/src/services/authApi';
 import { baseApi } from '@/src/services/baseApi';
 import { normalizeCompanyCode } from '@/src/services/tenantIdentity';
 import { clearTenant, setCredentials } from '@/src/store/authSlice';
+import { adoptSessionTenant, clearActiveTenant } from '@/src/store/tenantSlice';
 import { useAppDispatch, useAppSelector } from '@/src/store/hooks';
 import { store } from '@/src/store/store';
 import { useTheme } from '@/src/theme/ThemeProvider';
@@ -97,6 +98,10 @@ export default function LoginScreen() {
           user: result.user,
         })
       );
+      // The active tenant always comes from the server-signed session, never from
+      // anything the client remembered, so signing in resets it to this login's own
+      // tenant even if a previous session had switched elsewhere.
+      dispatch(adoptSessionTenant(result.user));
       router.replace('/map');
     } catch (err) {
       setFormError(apiErrorMessage(err, 'Unable to sign in'));
@@ -117,6 +122,7 @@ export default function LoginScreen() {
 
   const clearCompanyCode = async () => {
     dispatch(clearTenant());
+    dispatch(clearActiveTenant());
     dispatch(baseApi.util.resetApiState());
     await authStorage.clearAll().catch(() => undefined);
     router.replace('/company-code');

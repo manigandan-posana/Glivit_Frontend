@@ -463,6 +463,15 @@ export const Vehicle3DMarker: React.FC<Vehicle3DMarkerProps> = ({
       if (built.model) {
         car.scale.setScalar(4.6 / built.model.targetLengthMeters);
       }
+      // Models are baked nose -> local +Z (see buildCar), so a nose vector of
+      // (sin y, 0, cos y) results from rotation.y = y. This camera sits at z = -8.6
+      // looking toward +Z, which makes screen-right world -X; the nose therefore
+      // projects to (-sin y, cos y). Matching the compass direction (sin H, cos H)
+      // gives y = -H.
+      //
+      // Fleet3DOverlay uses (180 - H) for the SAME geometry, and both are correct:
+      // its camera looks from +Z, so screen-right is world +X and its parent group
+      // is tilted +90deg about X. Do not "unify" these two formulas.
       car.rotation.y = THREE.MathUtils.degToRad(-heading);
       scene.add(car);
 

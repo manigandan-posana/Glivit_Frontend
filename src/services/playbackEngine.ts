@@ -124,6 +124,18 @@ function preparePoints(rawPoints: PlaybackTrackPoint[]): {
     const lat = snap.snapped ? snap.latitude : point.lat;
     const lng = snap.snapped ? snap.longitude : point.lng;
 
+    // Bearing is derived from where the vehicle actually WENT, in priority order:
+    //
+    //   1. barely moved  -> hold the last known bearing (never spin on GPS jitter)
+    //   2. next fix      -> bearing from here to the next coordinate (travel forward)
+    //   3. previous fix  -> bearing from the previous coordinate to here (last point)
+    //   4. recorded course from the device
+    //   5. last known bearing
+    //
+    // The snapped ROAD bearing is deliberately absent. A road's orientation says
+    // nothing about which way a vehicle is driving along it, so preferring it (as
+    // this once did) rendered any vehicle travelling "against" the stored road
+    // direction facing backwards.
     const next = accepted[index + 1];
     const previous = accepted[index - 1];
     const nextDistance = next ? haversineKm(lat, lng, next.lat, next.lng) : 0;
@@ -137,15 +149,13 @@ function preparePoints(rawPoints: PlaybackTrackPoint[]): {
     const derived =
       isStopped && Number.isFinite(previousBearing)
         ? normalizeHeading(previousBearing)
-        : snap.snapped && Number.isFinite(snap.bearing)
-          ? snap.bearing
-          : next && nextDistance >= MIN_BEARING_DISTANCE_KM
-            ? bearingDeg(lat, lng, next.lat, next.lng)
-            : previous && previousDistance >= MIN_BEARING_DISTANCE_KM
-              ? bearingDeg(previous.lat, previous.lng, lat, lng)
-              : Number.isFinite(point.course) && point.course !== 0
-                ? normalizeHeading(point.course)
-                : normalizeHeading(previousBearing, 0);
+        : next && nextDistance >= MIN_BEARING_DISTANCE_KM
+          ? bearingDeg(lat, lng, next.lat, next.lng)
+          : previous && previousDistance >= MIN_BEARING_DISTANCE_KM
+            ? bearingDeg(previous.lat, previous.lng, lat, lng)
+            : Number.isFinite(point.course) && point.course !== 0
+              ? normalizeHeading(point.course)
+              : normalizeHeading(previousBearing, 0);
 
     corrected.push({
       ...point,

@@ -12,7 +12,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useActiveTenantId, useTenantEpoch } from '@/src/store/hooks';
 import {
+  forgetGeofenceMemory,
   loadGeofenceNotifiedKeys,
   loadGeofenceStatesFromStorage,
   saveGeofenceNotifiedKeys,
@@ -127,19 +129,41 @@ export function useGeofenceMonitor(
   dismissAlert: (id: string) => void;
 } {
   const [alerts, setAlerts] = useState<GeofenceAlert[]>([]);
+  // Geofence and device ids are tenant-owned, so every persisted key and every
+  // alert already raised belongs to one tenant only.
+  const tenantId = useActiveTenantId();
+  const tenantEpoch = useTenantEpoch();
 
   // Persisted "last known state" per (geofenceId, deviceId) key
   const statesRef = useRef<Record<string, 'INSIDE' | 'OUTSIDE'>>({});
   // Persisted dedup set — keys for events already notified this session
   const notifiedRef = useRef<Record<string, boolean>>({});
-
-  // Load persisted state on mount
+  // Load persisted state on mount and whenever the active tenant changes.
   useEffect(() => {
+    // Drop the previous tenant's in-memory state immediately - alerts must never be
+    // evaluated against another tenant's inside/outside history.
+    statesRef.current = {};
+    notifiedRef.current = {};
+    setAlerts([]);
+
+    // A load started for the previous tenant must not apply after a switch, so this
+    // run's own flag - not a shared ref - decides whether its result is still wanted.
+    let current = true;
     void (async () => {
-      statesRef.current = await loadGeofenceStatesFromStorage();
-      notifiedRef.current = await loadGeofenceNotifiedKeys();
+      const [states, notified] = await Promise.all([
+        loadGeofenceStatesFromStorage(tenantId),
+        loadGeofenceNotifiedKeys(tenantId),
+      ]);
+      if (!current) return;
+      statesRef.current = states;
+      notifiedRef.current = notified;
     })();
-  }, []);
+
+    return () => {
+      current = false;
+      forgetGeofenceMemory(tenantId);
+    };
+  }, [tenantId, tenantEpoch]);
 
   // Check each vehicle against each geofence whenever positions update
   useEffect(() => {
@@ -213,14 +237,14 @@ export function useGeofenceMonitor(
       }
     }
 
-    // Persist updated state
-    void saveGeofenceStatesToStorage(statesRef.current);
-    void saveGeofenceNotifiedKeys(notifiedRef.current);
+    // Persist updated state under the ACTIVE tenant's namespaced keys.
+    void saveGeofenceStatesToStorage(tenantId, statesRef.current);
+    void saveGeofenceNotifiedKeys(tenantId, notifiedRef.current);
 
     if (newAlerts.length > 0) {
       setAlerts((prev) => [...newAlerts, ...prev]);
     }
-  }, [geofences, vehicles, enabled]);
+  }, [geofences, vehicles, enabled, tenantId, tenantEpoch]);
 
   const dismissAlert = useCallback((id: string) => {
     setAlerts((prev) => prev.filter((a) => a.id !== id));
