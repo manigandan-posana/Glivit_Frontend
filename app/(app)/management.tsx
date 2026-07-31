@@ -238,9 +238,8 @@ export default function ManagementScreen() {
               key={user.id}
               icon={user.role === 'DRIVER' ? 'card-account-details-outline' : 'account-outline'}
               title={user.name}
-              meta={`${user.username} | ${user.role === 'DRIVER' ? 'Driver' : user.role} | ${user.status}${
-                user.mobile ? ` | ${user.mobile}` : ''
-              }`}
+              meta={`${user.username} | ${user.role === 'DRIVER' ? 'Driver' : user.role} | ${user.status}${user.mobile ? ` | ${user.mobile}` : ''
+                }`}
             />
           )) ?? null}
         </Section>

@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 
 import { P } from '@/src/constants/permissions';
 import { apiErrorMessage } from '@/src/services/apiError';
@@ -35,26 +36,44 @@ type DrawerLink = {
   module?: string;
 };
 
-// The All Vehicles Map is the app home. Live fleet tracking, events, maintenance
-// alerts and the AI Command Centre are surfaced there (map + notification bell),
-// so they no longer need their own drawer destinations.
-//
-// Drivers are not a destination of their own: a driver is a user with the DRIVER
-// role, so the whole lifecycle lives under Management > Users.
 const LINKS: DrawerLink[] = [
   { label: 'Live Map', icon: 'map-marker-radius-outline', route: '/map', permission: P.VIEW_ALL_VEHICLES },
-  { label: 'All Vehicles', icon: 'car-multiple', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
+  { label: 'All Vehicles', icon: 'car', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
   { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
   { label: 'Reports', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
   { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },
   { label: 'Management', icon: 'shield-account-outline', route: '/management', permission: P.MANAGE_DEVICES },
 ];
 
-/** Account/platform destinations, separated from the fleet modules by a divider. */
 const ACCOUNT_LINKS: DrawerLink[] = [
   { label: 'Manage Tenants', icon: 'office-building-cog-outline', route: '/manage-tenants' },
   { label: 'Settings', icon: 'cog-outline', route: '/settings' },
 ];
+
+function HeaderBackground() {
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0F9D58' }]} />
+      <Svg height="100%" preserveAspectRatio="none" viewBox="0 0 300 200" width="100%">
+        <Defs>
+          <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <Stop offset="0%" stopColor="#0B8043" stopOpacity={0.5} />
+            <Stop offset="100%" stopColor="#066935" stopOpacity={0.5} />
+          </LinearGradient>
+        </Defs>
+        <Rect fill="url(#bgGrad)" height="200" width="300" x="0" y="0" />
+        <Path
+          d="M 100 0 C 180 60, 240 20, 320 80 L 320 0 Z"
+          fill="rgba(255, 255, 255, 0.09)"
+        />
+        <Path
+          d="M 0 40 C 100 100, 200 40, 320 120 L 320 0 L 0 0 Z"
+          fill="rgba(255, 255, 255, 0.05)"
+        />
+      </Svg>
+    </View>
+  );
+}
 
 export function AppDrawerContent(props: DrawerContentComponentProps) {
   const router = useRouter();
@@ -68,14 +87,12 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
   const activeTenantCode = useAppSelector((s) => s.tenant.activeTenantCode);
   const activeTenantName = useAppSelector((s) => s.tenant.activeTenantName);
   const activeCompanyName = useAppSelector((s) => s.tenant.activeCompanyName);
-  // True while acting inside a tenant other than the one that owns the login.
   const isSwitchedTenant = useAppSelector(
     (s) =>
       s.auth.user?.homeTenantId != null && s.auth.user.homeTenantId !== s.tenant.activeTenantId
   );
   const [logout] = useLogoutMutation();
 
-  // Permission checks (hooks must be called unconditionally, so evaluate all).
   const canViewAll = useHasPermission(P.VIEW_ALL_VEHICLES);
   const canLive = useHasPermission(P.VIEW_LIVE_LOCATION);
   const canGeofence = useHasPermission(P.MANAGE_GEOFENCES);
@@ -90,12 +107,6 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
   permissionMap[P.MANAGE_DEVICES] = canManageDevices;
   const enabledModules = new Set((tenant?.enabledModules ?? []).map((m) => m.toLowerCase()));
 
-  /**
-   * Route name of the focused screen, used to highlight the active row.
-   *
-   * Taken from the navigator's own state rather than tracked separately, so the
-   * highlight cannot drift out of step with what is actually on screen.
-   */
   const activeRouteName = props.state.routeNames[props.state.index];
 
   const visible = (links: DrawerLink[]) =>
@@ -121,11 +132,9 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
           try {
             await logout().unwrap();
           } catch {
-            // Best-effort; clear the local session regardless.
+            // Best-effort; clear local session
           }
           dispatch(clearSession());
-          // The active tenant is part of the session, not of the app: it must not
-          // survive a sign-out into the next user's session.
           dispatch(clearActiveTenant());
           dispatch(baseApi.util.resetApiState());
           await authStorage.clearSession().catch(() => undefined);
@@ -142,45 +151,47 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
     else Alert.alert('Contact Service Provider', apiErrorMessage(null, 'No support contact configured.'));
   };
 
-  const displayName = user?.name ?? user?.username ?? 'Signed in';
-  const tenantLabel = activeTenantName ?? tenant?.appName ?? 'Glivt';
-  const tenantCodeLabel = activeTenantCode ?? companyCode ?? '-';
+  const displayName = user?.name ?? user?.username ?? 'Demo Admin';
+  const tenantLabel = activeTenantName ?? tenant?.appName ?? tenant?.name ?? 'Glivt Demo Fleet';
+  const companySublabel = activeCompanyName ?? user?.companyName ?? tenant?.name ?? 'Glivt Demo Logistics Pvt Ltd';
+  const tenantCodeLabel = activeTenantCode ?? companyCode ?? 'DEMO';
+  const roleLabel = formatRole(user?.role) || 'Admin';
 
   return (
-    // The drawer owns the full height. `paddingTop` carries the status-bar inset so
-    // the green header reaches the top edge without the content sitting under the
-    // clock, and the footer carries the bottom inset so it clears the gesture bar.
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <View style={styles.identityRow}>
-          <View style={styles.avatar}>
-            {tenant?.logoUrl ? (
-              <Image contentFit="cover" source={{ uri: tenant.logoUrl }} style={styles.avatarImage} />
-            ) : (
-              <Text style={styles.avatarInitials}>{initials(displayName)}</Text>
-            )}
-          </View>
-          <View style={styles.identityText}>
-            <Text numberOfLines={1} style={styles.tenantName}>
-              {tenantLabel}
-            </Text>
-            {activeCompanyName ? (
-              <Text numberOfLines={1} style={styles.companyName}>
-                {activeCompanyName}
+    <View style={styles.root}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 24) + spacing.md }]}>
+        <HeaderBackground />
+        <View style={styles.headerContent}>
+          <View style={styles.identityRow}>
+            <View style={styles.avatar}>
+              {tenant?.logoUrl ? (
+                <Image contentFit="cover" source={{ uri: tenant.logoUrl }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarInitials}>{initials(displayName)}</Text>
+              )}
+            </View>
+            <View style={styles.identityText}>
+              <Text numberOfLines={1} style={styles.tenantName}>
+                {tenantLabel}
               </Text>
-            ) : null}
+              <Text numberOfLines={1} style={styles.companyName}>
+                {companySublabel}
+              </Text>
+            </View>
           </View>
-        </View>
 
-        <Text numberOfLines={1} style={styles.userName}>
-          {displayName}
-        </Text>
+          <View style={styles.userPill}>
+            <MaterialCommunityIcons color="#FFFFFF" name="account-outline" size={15} />
+            <Text numberOfLines={1} style={styles.userPillText}>
+              {displayName}
+            </Text>
+          </View>
 
-        {/* Compact metadata chips: role, tenant code, and a switched-tenant marker. */}
-        <View style={styles.chipRow}>
-          <Chip icon="shield-account-outline" label={formatRole(user?.role)} />
-          <Chip icon="identifier" label={tenantCodeLabel} />
-          {isSwitchedTenant ? <Chip icon="swap-horizontal" label="Switched" /> : null}
+          <View style={styles.chipRow}>
+            <Chip icon="shield-outline" label={roleLabel} />
+            <Chip icon="card-account-details-outline" label={tenantCodeLabel} />
+            {isSwitchedTenant ? <Chip icon="swap-horizontal" label="Switched" /> : null}
+          </View>
         </View>
       </View>
 
@@ -188,7 +199,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         contentContainerStyle={styles.items}
         showsVerticalScrollIndicator={false}
         style={styles.scroll}>
-        <Text style={styles.sectionHeading}>Fleet</Text>
+        <Text style={styles.sectionHeading}>FLEET</Text>
         {visible(LINKS).map((link) => (
           <DrawerRow
             active={activeRouteName === routeKey(link.route)}
@@ -200,7 +211,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         ))}
 
         <View style={styles.divider} />
-        <Text style={styles.sectionHeading}>Account</Text>
+        <Text style={styles.sectionHeading}>ACCOUNT</Text>
         {visible(ACCOUNT_LINKS).map((link) => (
           <DrawerRow
             active={activeRouteName === routeKey(link.route)}
@@ -213,19 +224,13 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         <DrawerRow icon="headset" label="Contact Service Provider" onPress={contactProvider} />
       </ScrollView>
 
-      {/*
-        Fixed footer. It sits outside the ScrollView so Logout is always reachable,
-        spans the full drawer width, and pads by the bottom safe-area inset so it
-        never sits under the Android gesture bar or the iOS home indicator.
-      */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
-        <Pressable
-          accessibilityRole="button"
+      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.xs }]}>
+        <DrawerRow
+          icon="logout"
+          isLogout
+          label="Logout"
           onPress={onLogout}
-          style={({ pressed }) => [styles.logout, pressed && { backgroundColor: c.surfaceAlt }]}>
-          <MaterialCommunityIcons color={c.danger} name="logout" size={20} />
-          <Text style={styles.logoutText}>Logout</Text>
-        </Pressable>
+        />
       </View>
     </View>
   );
@@ -243,7 +248,7 @@ function Chip({
   if (!label) return null;
   return (
     <View style={styles.chip}>
-      <MaterialCommunityIcons color="rgba(255,255,255,0.92)" name={icon} size={12} />
+      <MaterialCommunityIcons color="rgba(255,255,255,0.95)" name={icon} size={13} />
       <Text numberOfLines={1} style={styles.chipText}>
         {label}
       </Text>
@@ -256,14 +261,21 @@ function DrawerRow({
   label,
   onPress,
   active = false,
+  isLogout = false,
 }: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
   onPress: () => void;
   active?: boolean;
+  isLogout?: boolean;
 }) {
   const { colors: c } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
+
+  const iconColor = isLogout ? c.danger : active ? c.primary : c.textPrimary;
+  const textColor = isLogout ? c.danger : active ? c.primary : c.textPrimary;
+  const chevronColor = isLogout ? c.danger : active ? c.primary : '#9CA3AF';
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -272,21 +284,17 @@ function DrawerRow({
       style={({ pressed }) => [
         styles.row,
         active && styles.rowActive,
-        pressed && !active && { backgroundColor: c.surfaceAlt },
+        pressed && !active && { backgroundColor: isLogout ? 'rgba(239, 68, 68, 0.08)' : c.surfaceAlt },
       ]}>
-      <MaterialCommunityIcons
-        color={active ? c.primary : c.textSecondary}
-        name={icon}
-        size={21}
-      />
-      <Text numberOfLines={1} style={[styles.rowLabel, active && styles.rowLabelActive]}>
+      <MaterialCommunityIcons color={iconColor} name={icon} size={22} />
+      <Text numberOfLines={1} style={[styles.rowLabel, { color: textColor }, active && styles.rowLabelActive]}>
         {label}
       </Text>
+      <MaterialCommunityIcons color={chevronColor} name="chevron-right" size={20} />
     </Pressable>
   );
 }
 
-/** Drawer routes are registered by file name, so `/map` is the `map` screen. */
 function routeKey(route: DrawerRoute): string {
   return route.replace(/^\//, '');
 }
@@ -296,10 +304,9 @@ function formatRole(role?: string) {
   return role.charAt(0) + role.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
-/** Up to two initials for the avatar fallback when the tenant has no logo. */
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
+  if (parts.length === 0) return 'DA';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
@@ -309,115 +316,138 @@ const makeStyles = (c: ThemeColors) =>
     root: { backgroundColor: c.surface, flex: 1 },
 
     // --- Header ---------------------------------------------------------
-    // A flat block with square edges. The previous version used large bottom
-    // corner radii, which read as an oversized floating badge rather than a
-    // header and left an uneven notch against the menu below it.
     header: {
+      position: 'relative',
       backgroundColor: c.primary,
-      gap: spacing.sm,
-      paddingBottom: spacing.md,
+      borderBottomLeftRadius: 20,
+      borderBottomRightRadius: 20,
+      overflow: 'hidden',
+      paddingBottom: spacing.lg,
       paddingHorizontal: spacing.md,
-      paddingTop: spacing.md,
     },
-    identityRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+    headerContent: {
+      gap: spacing.sm + 4,
+      zIndex: 1,
+    },
+    identityRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm + 4,
+    },
     avatar: {
       alignItems: 'center',
-      backgroundColor: 'rgba(255,255,255,0.22)',
-      borderColor: 'rgba(255,255,255,0.35)',
+      backgroundColor: 'rgba(255, 255, 255, 0.22)',
+      borderColor: 'rgba(255, 255, 255, 0.4)',
       borderRadius: radius.pill,
-      borderWidth: 1,
-      height: 44,
+      borderWidth: 1.5,
+      height: 48,
       justifyContent: 'center',
       overflow: 'hidden',
-      width: 44,
+      width: 48,
     },
-    avatarImage: { height: 44, width: 44 },
-    avatarInitials: { color: '#FFFFFF', fontSize: typography.label, fontWeight: '900' },
+    avatarImage: { height: 48, width: 48 },
+    avatarInitials: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
     identityText: { flex: 1, minWidth: 0 },
-    tenantName: { color: '#FFFFFF', fontSize: typography.title, fontWeight: '800' },
+    tenantName: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', letterSpacing: 0.2 },
     companyName: {
-      color: 'rgba(255,255,255,0.82)',
-      fontSize: typography.caption,
-      marginTop: 1,
+      color: 'rgba(255, 255, 255, 0.88)',
+      fontSize: 13,
+      fontWeight: '400',
+      marginTop: 2,
     },
-    userName: {
-      color: '#FFFFFF',
-      fontSize: typography.label,
-      fontWeight: '600',
-    },
-    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-    chip: {
+
+    // --- User Pill ------------------------------------------------------
+    userPill: {
       alignItems: 'center',
-      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignSelf: 'flex-start',
+      backgroundColor: 'rgba(0, 0, 0, 0.20)',
       borderRadius: radius.pill,
       flexDirection: 'row',
-      gap: 4,
+      gap: 6,
       maxWidth: '100%',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 3,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    userPillText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+
+    // --- Chips Row ------------------------------------------------------
+    chipRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    chip: {
+      alignItems: 'center',
+      backgroundColor: 'rgba(255, 255, 255, 0.22)',
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: 5,
+      paddingHorizontal: 11,
+      paddingVertical: 5,
     },
     chipText: {
       color: '#FFFFFF',
-      fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 0.3,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.4,
     },
 
-    // --- Menu -----------------------------------------------------------
+    // --- Menu List ------------------------------------------------------
     scroll: { flex: 1 },
     items: { paddingBottom: spacing.md, paddingTop: spacing.sm },
     sectionHeading: {
       color: c.textMuted,
-      fontSize: 10,
-      fontWeight: '900',
+      fontSize: 11,
+      fontWeight: '800',
       letterSpacing: 0.8,
       paddingBottom: spacing.xs,
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.xs,
+      paddingHorizontal: spacing.md + 4,
+      paddingTop: spacing.xs + 4,
       textTransform: 'uppercase',
     },
     row: {
       alignItems: 'center',
+      borderRadius: radius.md,
+      borderWidth: 1,
       borderColor: 'transparent',
-      borderRadius: radius.sm,
-      borderWidth: StyleSheet.hairlineWidth * 2,
       flexDirection: 'row',
-      gap: spacing.md,
-      marginHorizontal: spacing.sm,
+      gap: spacing.sm + 4,
+      marginHorizontal: spacing.sm + 2,
       paddingHorizontal: spacing.md,
       paddingVertical: 11,
+      marginVertical: 2,
     },
-    // Active tab: soft brand-tinted fill plus a visible border, so the current
-    // screen is obvious without relying on colour alone.
     rowActive: {
       backgroundColor: c.accentSoft,
-      borderColor: c.primary,
+      borderColor: 'rgba(34, 197, 94, 0.3)',
     },
-    rowLabel: { color: c.textPrimary, flex: 1, fontSize: typography.body, fontWeight: '600' },
-    rowLabelActive: { color: c.primary, fontWeight: '800' },
+    rowLabel: {
+      flex: 1,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    rowLabelActive: {
+      fontWeight: '700',
+    },
     divider: {
       backgroundColor: c.border,
       height: StyleSheet.hairlineWidth * 2,
-      marginHorizontal: spacing.md,
-      marginVertical: spacing.sm,
+      marginHorizontal: spacing.md + 4,
+      marginVertical: spacing.sm + 2,
     },
 
     // --- Footer ---------------------------------------------------------
     footer: {
       backgroundColor: c.surface,
       borderTopColor: c.border,
-      borderTopWidth: StyleSheet.hairlineWidth * 2,
-      paddingHorizontal: spacing.sm,
-      paddingTop: spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: spacing.xs,
+      paddingTop: spacing.xs,
     },
-    logout: {
-      alignItems: 'center',
-      borderRadius: radius.sm,
-      flexDirection: 'row',
-      gap: spacing.md,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 12,
-      width: '100%',
-    },
-    logoutText: { color: c.danger, fontSize: typography.body, fontWeight: '700' },
   });
+
