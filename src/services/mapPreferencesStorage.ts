@@ -25,10 +25,20 @@ export async function loadMapPreferences(): Promise<MapPreferences> {
   try {
     if (Platform.OS === 'web') {
       const raw = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
-      return raw ? { ...DEFAULT_MAP_PREFERENCES, ...JSON.parse(raw) } : DEFAULT_MAP_PREFERENCES;
+      if (!raw) return DEFAULT_MAP_PREFERENCES;
+      const parsed = JSON.parse(raw);
+      return {
+        mapType: parsed.mapType ?? DEFAULT_MAP_PREFERENCES.mapType,
+        details: { ...DEFAULT_MAP_PREFERENCES.details, ...(parsed.details || {}) },
+      };
     } else {
       const raw = await SecureStore.getItemAsync(STORAGE_KEY);
-      return raw ? { ...DEFAULT_MAP_PREFERENCES, ...JSON.parse(raw) } : DEFAULT_MAP_PREFERENCES;
+      if (!raw) return DEFAULT_MAP_PREFERENCES;
+      const parsed = JSON.parse(raw);
+      return {
+        mapType: parsed.mapType ?? DEFAULT_MAP_PREFERENCES.mapType,
+        details: { ...DEFAULT_MAP_PREFERENCES.details, ...(parsed.details || {}) },
+      };
     }
   } catch {
     return DEFAULT_MAP_PREFERENCES;

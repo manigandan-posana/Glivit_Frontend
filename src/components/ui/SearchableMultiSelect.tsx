@@ -13,47 +13,34 @@ import {
 import { TextField } from '@/src/components/ui/TextField';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+import type { DropdownOption } from './SearchableDropdown';
 
-export type DropdownOption = {
-  id: number;
-  label: string;
-  subLabel?: string;
-  phone?: string;
-  dotColor?: string;
-  searchTags?: string[];
-};
-
-export type SearchableDropdownProps = {
+export type SearchableMultiSelectProps = {
   label?: string;
   placeholder?: string;
   emptyText?: string;
   options: DropdownOption[];
-  selectedId?: number;
-  onSelect: (option: DropdownOption | undefined) => void;
+  selectedIds: number[];
+  onSelectionChange: (ids: number[]) => void;
   loading?: boolean;
   error?: string;
 };
 
-export function SearchableDropdown({
+export function SearchableMultiSelect({
   label,
-  placeholder = 'Select option...',
+  placeholder = 'Select options...',
   emptyText = 'No items found',
   options,
-  selectedId,
-  onSelect,
+  selectedIds,
+  onSelectionChange,
   loading = false,
   error,
-}: SearchableDropdownProps) {
+}: SearchableMultiSelectProps) {
   const { colors: c } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const selectedOption = useMemo(
-    () => options.find((opt) => opt.id === selectedId),
-    [options, selectedId]
-  );
 
   const filteredOptions = useMemo(() => {
     if (!searchQuery.trim()) return options;
@@ -72,14 +59,29 @@ export function SearchableDropdown({
     setModalVisible(true);
   };
 
-  const handleSelect = (option: DropdownOption) => {
-    onSelect(option);
-    setModalVisible(false);
+  const handleToggle = (optionId: number) => {
+    if (selectedIds.includes(optionId)) {
+      onSelectionChange(selectedIds.filter((id) => id !== optionId));
+    } else {
+      onSelectionChange([...selectedIds, optionId]);
+    }
   };
 
-  const handleClear = () => {
-    onSelect(undefined);
+  const handleSelectAll = () => {
+    const allFilteredIds = filteredOptions.map(opt => opt.id);
+    const newSelection = Array.from(new Set([...selectedIds, ...allFilteredIds]));
+    onSelectionChange(newSelection);
   };
+
+  const handleClearAll = () => {
+    onSelectionChange([]);
+  };
+
+  const triggerText = selectedIds.length === 0
+    ? placeholder
+    : selectedIds.length === 1
+      ? options.find(o => o.id === selectedIds[0])?.label ?? '1 item selected'
+      : `${selectedIds.length} vehicles selected`;
 
   return (
     <View style={styles.container}>
@@ -91,35 +93,25 @@ export function SearchableDropdown({
         onPress={handleOpen}
         style={[styles.trigger, Boolean(error) && styles.triggerError]}>
         <View style={[styles.triggerContent, { flexDirection: 'row', alignItems: 'center', gap: spacing.sm }]}>
-          {selectedOption?.dotColor ? (
-            <View style={[styles.dot, { backgroundColor: selectedOption.dotColor }]} />
-          ) : null}
           <View style={{ flex: 1 }}>
             <Text
               numberOfLines={1}
               style={[
                 styles.triggerText,
-                !selectedOption && styles.triggerPlaceholder,
+                selectedIds.length === 0 && styles.triggerPlaceholder,
               ]}>
-              {selectedOption ? selectedOption.label : placeholder}
+              {triggerText}
             </Text>
-            {selectedOption?.subLabel || selectedOption?.phone ? (
-              <Text numberOfLines={1} style={styles.triggerSubText}>
-                {selectedOption.subLabel ? selectedOption.subLabel : ''}
-                {selectedOption.subLabel && selectedOption.phone ? ' • ' : ''}
-                {selectedOption.phone ? selectedOption.phone : ''}
-              </Text>
-            ) : null}
           </View>
         </View>
 
         <View style={styles.triggerActions}>
-          {selectedOption ? (
+          {selectedIds.length > 0 ? (
             <Pressable
               accessibilityLabel="Clear selection"
               accessibilityRole="button"
               hitSlop={8}
-              onPress={handleClear}
+              onPress={handleClearAll}
               style={styles.clearButton}>
               <MaterialCommunityIcons color={c.textMuted} name="close-circle" size={18} />
             </Pressable>
@@ -151,7 +143,7 @@ export function SearchableDropdown({
                 hitSlop={8}
                 onPress={() => setModalVisible(false)}
                 style={styles.closeIcon}>
-                <MaterialCommunityIcons color={c.textSecondary} name="close" size={22} />
+                <Text style={styles.doneText}>Done</Text>
               </Pressable>
             </View>
 
@@ -163,6 +155,15 @@ export function SearchableDropdown({
                 placeholder="Search..."
                 value={searchQuery}
               />
+            </View>
+            
+            <View style={styles.bulkActions}>
+              <Pressable hitSlop={12} onPress={handleSelectAll}>
+                <Text style={styles.bulkActionText}>Select All</Text>
+              </Pressable>
+              <Pressable hitSlop={12} onPress={handleClearAll}>
+                <Text style={styles.bulkActionText}>Clear All</Text>
+              </Pressable>
             </View>
 
             <FlatList
@@ -177,12 +178,13 @@ export function SearchableDropdown({
                 </View>
               }
               renderItem={({ item }) => {
-                const isSelected = item.id === selectedId;
+                const isSelected = selectedIds.includes(item.id);
                 return (
                   <TouchableOpacity
-                    accessibilityRole="button"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isSelected }}
                     activeOpacity={0.7}
-                    onPress={() => handleSelect(item)}
+                    onPress={() => handleToggle(item.id)}
                     style={[styles.optionRow, isSelected && styles.optionRowSelected]}>
                     <View style={[styles.optionTextContainer, { flexDirection: 'row', alignItems: 'center', gap: spacing.sm }]}>
                       {item.dotColor ? (
@@ -201,9 +203,11 @@ export function SearchableDropdown({
                         ) : null}
                       </View>
                     </View>
-                    {isSelected ? (
-                      <MaterialCommunityIcons color={c.primary} name="check" size={20} />
-                    ) : null}
+                    <MaterialCommunityIcons 
+                      color={isSelected ? c.primary : c.textMuted} 
+                      name={isSelected ? "checkbox-marked" : "checkbox-blank-outline"} 
+                      size={24} 
+                    />
                   </TouchableOpacity>
                 );
               }}
@@ -253,11 +257,6 @@ const makeStyles = (c: ThemeColors) =>
       color: c.textMuted,
       fontWeight: '400',
     },
-    triggerSubText: {
-      color: c.textSecondary,
-      fontSize: typography.caption,
-      marginTop: 2,
-    },
     triggerActions: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -299,8 +298,26 @@ const makeStyles = (c: ThemeColors) =>
     closeIcon: {
       padding: spacing.xs,
     },
+    doneText: {
+      color: c.primary,
+      fontSize: typography.body,
+      fontWeight: '700',
+    },
     searchContainer: {
       marginBottom: spacing.sm,
+    },
+    bulkActions: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+      paddingBottom: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.border,
+    },
+    bulkActionText: {
+      color: c.primary,
+      fontSize: typography.caption,
+      fontWeight: '700',
     },
     listContent: {
       paddingVertical: spacing.xs,
@@ -310,8 +327,8 @@ const makeStyles = (c: ThemeColors) =>
       borderRadius: radius.md,
       flexDirection: 'row',
       justifyContent: 'space-between',
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
     },
     optionRowSelected: {
       backgroundColor: c.accentSoft,

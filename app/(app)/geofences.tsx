@@ -667,9 +667,21 @@ export default function GeofencesScreen() {
 
             <View style={styles.listHeaderRow}>
               <Text style={styles.title}>Geofences</Text>
-              <Text style={styles.countBadge}>
-                {geofences.length} {geofences.length === 1 ? 'zone' : 'zones'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+                <Text style={styles.countBadge}>
+                  {geofences.length} {geofences.length === 1 ? 'zone' : 'zones'}
+                </Text>
+                <Pressable
+                  accessibilityLabel="Add geofence"
+                  accessibilityRole="button"
+                  onPress={openCreate}
+                  style={({ pressed }) => [
+                    { padding: 4 },
+                    pressed && { opacity: 0.7 },
+                  ]}>
+                  <MaterialCommunityIcons color={c.primary} name="plus-circle" size={24} />
+                </Pressable>
+              </View>
             </View>
           </View>
         }
@@ -692,19 +704,6 @@ export default function GeofencesScreen() {
           />
         )}
       />
-
-      <Pressable
-        accessibilityLabel="Add geofence"
-        accessibilityRole="button"
-        onPress={openCreate}
-        style={({ pressed }) => [
-          styles.fab,
-          { bottom: insets.bottom + spacing.md },
-          pressed && styles.fabPressed,
-        ]}>
-        <MaterialCommunityIcons color={c.onPrimary} name="plus" size={22} />
-        <Text style={styles.fabLabel}>Add Geofence</Text>
-      </Pressable>
 
       <Modal
         animationType="slide"

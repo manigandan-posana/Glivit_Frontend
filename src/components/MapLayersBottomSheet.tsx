@@ -63,6 +63,7 @@ export function MapLayersBottomSheet({
     };
     onChangePreferences(updated);
     void saveMapPreferences(updated);
+    onClose();
   };
 
   const toggleDetail = (key: keyof MapDetailOptions) => {
@@ -75,6 +76,7 @@ export function MapLayersBottomSheet({
     };
     onChangePreferences(updated);
     void saveMapPreferences(updated);
+    onClose();
   };
 
   return (

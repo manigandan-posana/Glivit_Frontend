@@ -760,7 +760,8 @@ function NativeFleetMap({
   }, []);
   const mountedRef = useRef(true);
   const projectionRequestRef = useRef(0);
-  const lastProjectionAtRef = useRef(0);
+  const lastCameraRef = useRef<any>(null);
+  const hasInitialFitRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
   const [threeReady, setThreeReady] = useState(false);
   const [threeFailed, setThreeFailed] = useState(false);
@@ -810,6 +811,7 @@ function NativeFleetMap({
         ),
       ]);
       if (!mountedRef.current || request !== projectionRequestRef.current) return;
+      lastCameraRef.current = camera;
 
       // Keep a margin around the viewport so markers near the edges are not
       // culled (and re-added) mid-animation while the camera pans/zooms or
@@ -844,8 +846,14 @@ function NativeFleetMap({
 
   const handleMapReady = useCallback(() => {
     setMapReady(true);
-    onFitAll();
-  }, [onFitAll]);
+    if (!hasInitialFitRef.current) {
+      hasInitialFitRef.current = true;
+      onFitAll();
+    } else if (lastCameraRef.current) {
+      mapRef.current?.setCamera(lastCameraRef.current);
+      setTimeout(() => void projectVehicles(true), 100);
+    }
+  }, [onFitAll, projectVehicles, mapRef]);
 
   const handleThreeReady = useCallback(() => setThreeReady(true), []);
   const handleThreeUnavailable = useCallback((message: string) => {
@@ -932,7 +940,7 @@ function NativeFleetMap({
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         customMapStyle={mapStyle}
-        mapType={mapPreferences.mapType}
+        mapType={mapPreferences.mapType === 'satellite' ? 'hybrid' : mapPreferences.mapType}
         showsTraffic={mapPreferences.details.traffic}
         loadingBackgroundColor="#E8EDF2"
         loadingEnabled
@@ -961,7 +969,8 @@ function NativeFleetMap({
               coordinate={{ latitude: device.latitude, longitude: device.longitude }}
               anchor={{ x: 0.5, y: 0.5 }}
               flat={false}
-              tracksViewChanges={false}
+              opacity={threeFailed ? 1 : 0}
+              tracksViewChanges={threeFailed}
               onPress={(e) => {
                 e.stopPropagation();
                 onSelectDevice(device.id);
@@ -995,44 +1004,6 @@ function NativeFleetMap({
       />
 
       {/* Leader lines tying a moved marker back to where it actually is. */}
-      {/* Transparent tap targets over each 3D vehicle. No status ring/halo/circle
-          is drawn — the 3D model (scaled up slightly when selected by
-          Fleet3DOverlay) is the only marker; status is shown in the popup. */}
-      {placed.map(({ id, item: d, point }) => {
-        const isSelected = selectedId === d.id;
-        const markerSize = isSelected ? 78 : 64;
-        return (
-          <Pressable
-            key={id}
-            accessibilityLabel={`${d.name}, ${d.state}`}
-            accessibilityRole="button"
-            onPress={() => {
-              onSelectDevice(d.id);
-            }}
-            style={[
-              fleetMapStyles.vehicle3DOverlay,
-              {
-                height: markerSize,
-                left: point.x - markerSize / 2,
-                top: point.y - markerSize / 2,
-                width: markerSize,
-              },
-            ]}>
-            {threeFailed ? (
-              <Vehicle3DMarker
-                heading={normalizeHeading(d.course - projection.heading)}
-                isActive={d.state === 'RUNNING'}
-                renderMode="image"
-                showImageFallback
-                size={markerSize}
-                speed={d.speed}
-                variant={modelForVehicle(d.category, d.id)}
-              />
-            ) : null}
-          </Pressable>
-        );
-      })}
-
       {popups.map(({ device, point, selected }) => (
         <VehiclePopup
           key={`popup-${device.id}`}

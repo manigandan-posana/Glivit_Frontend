@@ -21,6 +21,9 @@ import {
   useGetReportsQuery,
   useLazyGetReportContentQuery,
 } from '@/src/services/operationsApi';
+import { useGetAllDevicesQuery } from '@/src/services/devicesApi';
+import { SearchableMultiSelect } from '@/src/components/ui/SearchableMultiSelect';
+import type { DropdownOption } from '@/src/components/ui/SearchableDropdown';
 import {
   isFilePickerCancellation,
   saveReportFile,
@@ -36,12 +39,41 @@ export default function ReportsScreen() {
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const [reportType, setReportType] = React.useState('SUMMARY');
   const { data, isLoading, isFetching, isError, error, refetch } = useGetReportsQuery({ size: 50 });
+  const { data: devices, isLoading: loadingDevices, refetch: refetchDevices } = useGetAllDevicesQuery();
   const [createReport, { isLoading: isCreating }] = useCreateReportMutation();
   const [getContent] = useLazyGetReportContentQuery();
   const downloadingRef = React.useRef<number | null>(null);
   const [downloadingId, setDownloadingId] = React.useState<number | null>(null);
+  const [selectedDeviceIds, setSelectedDeviceIds] = React.useState<number[]>([]);
+
+  const deviceList = React.useMemo(() => devices ?? [], [devices]);
+
+  const dropdownOptions: DropdownOption[] = React.useMemo(() => {
+    return deviceList.map((device) => {
+      const label = device.vehicleName ? `${device.name} (${device.vehicleName})` : device.name;
+      const subLabel = device.driverName ? `Driver: ${device.driverName}` : undefined;
+      const searchTags = [device.name, device.vehicleName, device.driverName, device.imei].filter(Boolean) as string[];
+
+      return {
+        id: device.id,
+        label,
+        subLabel,
+        dotColor: c.primary,
+        searchTags,
+      };
+    });
+  }, [deviceList, c.primary]);
+
+  const refreshAll = React.useCallback(() => {
+    void refetch();
+    void refetchDevices();
+  }, [refetch, refetchDevices]);
 
   const create = async () => {
+    if (selectedDeviceIds.length === 0) {
+      Alert.alert('Validation Error', 'Please select at least one vehicle to generate a report.');
+      return;
+    }
     const to = new Date();
     const from = new Date(to.getTime() - 24 * 60 * 60 * 1000);
     try {
@@ -49,6 +81,7 @@ export default function ReportsScreen() {
         reportType,
         fromTime: from.toISOString(),
         toTime: to.toISOString(),
+        deviceIds: selectedDeviceIds,
         includeAddresses: true,
         includeMapMarkers: false,
         outputFormat: 'CSV',
@@ -84,8 +117,8 @@ export default function ReportsScreen() {
     }
   };
 
-  if (isLoading) return <LoadingView label="Loading reports..." />;
-  if (isError || !data) return <ErrorRetryView message={apiErrorMessage(error)} onRetry={refetch} />;
+  if (isLoading || loadingDevices) return <LoadingView label="Loading reports..." />;
+  if (isError || !data) return <ErrorRetryView message={apiErrorMessage(error)} onRetry={refreshAll} />;
 
   return (
     <View style={styles.screen}>
@@ -93,11 +126,19 @@ export default function ReportsScreen() {
         contentContainerStyle={styles.list}
         data={data.content}
         keyExtractor={(item) => String(item.id)}
-        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refreshAll} tintColor={c.primary} />}
         ListHeaderComponent={
           <Card style={styles.generator}>
             <Text style={styles.title}>Generate Report</Text>
             <Text style={styles.subtitle}>Creates a backend job for the last 24 hours using tenant history limits.</Text>
+            <SearchableMultiSelect
+              label="Select Vehicles"
+              placeholder="Search vehicle number, name, driver..."
+              emptyText="No matching vehicles found"
+              options={dropdownOptions}
+              selectedIds={selectedDeviceIds}
+              onSelectionChange={setSelectedDeviceIds}
+            />
             <View style={styles.chips}>
               {REPORT_TYPES.map((type) => (
                 <Chip key={type} active={type === reportType} label={format(type)} onPress={() => setReportType(type)} />

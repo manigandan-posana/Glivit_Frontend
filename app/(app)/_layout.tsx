@@ -1,10 +1,14 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
-import React from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { DrawerToggleButton } from '@react-navigation/drawer';
+import React, { useState, useEffect } from 'react';
+import { ActivityIndicator, Pressable, View } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import { Image } from 'expo-image';
 
 import { AppDrawerContent } from '@/src/components/AppDrawerContent';
+import { ProfilePanel } from '@/src/components/ProfilePanel';
 import { baseApi } from '@/src/services/baseApi';
 import {
   useAppSelector,
@@ -47,19 +51,50 @@ function HeaderReloadButton() {
   }, [reloading]);
 
   return (
-    <Pressable
-      accessibilityLabel="Reload page data"
-      accessibilityRole="button"
-      disabled={reloading}
-      hitSlop={12}
-      onPress={handleReload}
-      style={{ paddingHorizontal: 12, opacity: reloading ? 0.75 : 1 }}>
-      {reloading ? (
-        <ActivityIndicator color="#FFFFFF" size="small" />
-      ) : (
-        <MaterialCommunityIcons color="#FFFFFF" name="refresh" size={22} />
-      )}
-    </Pressable>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Pressable
+        accessibilityLabel="Reload page data"
+        accessibilityRole="button"
+        disabled={reloading}
+        hitSlop={12}
+        onPress={handleReload}
+        style={{ paddingHorizontal: 12, opacity: reloading ? 0.75 : 1 }}>
+        {reloading ? (
+          <ActivityIndicator color="#FFFFFF" size="small" />
+        ) : (
+          <MaterialCommunityIcons color="#FFFFFF" name="refresh" size={22} />
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
+const PROFILE_IMG_KEY = 'glivt.profile.imageUri';
+
+function HeaderRight({ onProfilePress }: { onProfilePress: () => void }) {
+  const [profileUri, setProfileUri] = useState<string | null>(null);
+
+  // Poll for changes when the panel is closed, since this is in the header
+  useEffect(() => {
+    let interval = setInterval(() => {
+      SecureStore.getItemAsync(PROFILE_IMG_KEY).then(uri => {
+        if (uri && uri !== profileUri) setProfileUri(uri);
+      }).catch(() => {});
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [profileUri]);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 8 }}>
+      <HeaderReloadButton />
+      <Pressable onPress={onProfilePress} hitSlop={12} style={{ paddingHorizontal: 12 }}>
+        {profileUri ? (
+          <Image source={{ uri: profileUri }} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} contentFit="cover" />
+        ) : (
+          <MaterialCommunityIcons color="#FFFFFF" name="account-circle" size={28} />
+        )}
+      </Pressable>
+    </View>
   );
 }
 
@@ -81,12 +116,10 @@ export default function AppLayout() {
     return <Redirect href="/login" />;
   }
 
+  const [profileVisible, setProfileVisible] = useState(false);
+
   return (
-    // Keying the whole authenticated navigator on the tenant epoch reinitialises
-    // navigation and every screen inside it when the tenant changes. This is what
-    // clears screen-level local state — selected vehicle, map camera, filters,
-    // pagination, search text — in one place, instead of relying on each screen to
-    // remember to reset itself. RTK Query state is reset separately by the switch.
+    <>
     <Drawer
       key={`tenant-${tenantEpoch}`}
       drawerContent={(props) => <AppDrawerContent {...props} />}
@@ -107,19 +140,23 @@ export default function AppLayout() {
           borderTopRightRadius: radius.lg,
           overflow: 'hidden',
           width: 300,
-          
         },
-        headerRight: () => <HeaderReloadButton />,
+        headerTitleAlign: 'center',
+        headerLeft: () => <DrawerToggleButton tintColor="#FFFFFF" />,
+        headerRight: () => <HeaderRight onProfilePress={() => setProfileVisible(true)} />,
       }}>
       <Drawer.Screen name="map" options={{ headerShown: false }} />
-      <Drawer.Screen name="ai-chat" options={{ title: 'AI Assistant' }} />
-      <Drawer.Screen name="vehicles" options={{ title: 'All Vehicles' }} />
-      <Drawer.Screen name="geofences" options={{ title: 'Geofences' }} />
-      <Drawer.Screen name="reports" options={{ title: 'Reports' }} />
-      <Drawer.Screen name="commands" options={{ title: 'Device Commands' }} />
-      <Drawer.Screen name="management" options={{ title: 'Management' }} />
-      <Drawer.Screen name="manage-tenants" options={{ title: 'Manage Tenants' }} />
-      <Drawer.Screen name="settings" options={{ title: 'Settings' }} />
+      <Drawer.Screen name="ai-chat" options={{ title: 'AI Assistant', headerTitle: 'AI Assistant' }} />
+      <Drawer.Screen name="vehicles" options={{ title: 'All Vehicles', headerTitle: 'All Vehicles' }} />
+      <Drawer.Screen name="geofences" options={{ title: 'Geofences', headerTitle: 'Geofences' }} />
+      <Drawer.Screen name="reports" options={{ title: 'Reports', headerTitle: 'Reports' }} />
+      <Drawer.Screen name="commands" options={{ title: 'Device Commands', headerTitle: 'Device Commands' }} />
+      <Drawer.Screen name="management" options={{ title: 'Management', headerTitle: 'Management' }} />
+      <Drawer.Screen name="manage-tenants" options={{ title: 'Manage Tenants', headerTitle: 'Manage Tenants' }} />
+      <Drawer.Screen name="settings" options={{ title: 'Settings', headerTitle: 'Settings' }} />
+      <Drawer.Screen name="timeline" options={{ title: 'Timeline', headerTitle: 'Timeline' }} />
     </Drawer>
+    <ProfilePanel visible={profileVisible} onClose={() => setProfileVisible(false)} />
+    </>
   );
 }

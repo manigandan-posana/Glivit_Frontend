@@ -22,24 +22,35 @@ type ThemeContextValue = {
   elevation: (level?: 1 | 2 | 3) => ReturnType<typeof elevationFor>;
   setMode: (mode: ThemeMode) => void;
   toggle: () => void;
+  setPrimaryColor: (hex: string | null) => void;
 };
 
 const STORAGE_KEY = 'glivt.theme.mode';
+const COLOR_STORAGE_KEY = 'glivt.theme.primaryColor';
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useColorScheme();
   const [mode, setModeState] = useState<ThemeMode>('system');
+  const [customPrimaryColor, setCustomPrimaryColorState] = useState<string | null>(null);
   const tenant = useAppSelector((s) => s.auth.tenantConfig);
 
-  // Restore the persisted preference once on mount (best-effort).
+  // Restore the persisted preferences once on mount (best-effort).
   useEffect(() => {
     let active = true;
-    SecureStore.getItemAsync(STORAGE_KEY)
-      .then((saved) => {
-        if (active && (saved === 'light' || saved === 'dark' || saved === 'system')) {
-          setModeState(saved);
+    Promise.all([
+      SecureStore.getItemAsync(STORAGE_KEY),
+      SecureStore.getItemAsync(COLOR_STORAGE_KEY)
+    ])
+      .then(([savedMode, savedColor]) => {
+        if (active) {
+          if (savedMode === 'light' || savedMode === 'dark' || savedMode === 'system') {
+            setModeState(savedMode);
+          }
+          if (savedColor) {
+            setCustomPrimaryColorState(savedColor);
+          }
         }
       })
       .catch(() => undefined);
@@ -55,13 +66,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     SecureStore.setItemAsync(STORAGE_KEY, next).catch(() => undefined);
   }, []);
 
+  const setPrimaryColor = useCallback((hex: string | null) => {
+    setCustomPrimaryColorState(hex);
+    if (hex) {
+      SecureStore.setItemAsync(COLOR_STORAGE_KEY, hex).catch(() => undefined);
+    } else {
+      SecureStore.deleteItemAsync(COLOR_STORAGE_KEY).catch(() => undefined);
+    }
+  }, []);
+
   const toggle = useCallback(() => {
     setMode(scheme === 'dark' ? 'light' : 'dark');
   }, [scheme, setMode]);
 
   const value = useMemo<ThemeContextValue>(() => {
     const colors = buildColors(scheme, {
-      primary: tenant?.primaryColor || undefined,
+      primary: customPrimaryColor || tenant?.primaryColor || undefined,
       secondary: tenant?.secondaryColor || undefined,
     });
     return {
@@ -73,8 +93,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       elevation: (level: 1 | 2 | 3 = 1) => elevationFor(colors, level),
       setMode,
       toggle,
+      setPrimaryColor,
     };
-  }, [scheme, mode, tenant?.primaryColor, tenant?.secondaryColor, setMode, toggle]);
+  }, [scheme, mode, customPrimaryColor, tenant?.primaryColor, tenant?.secondaryColor, setMode, toggle, setPrimaryColor]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
@@ -93,6 +114,7 @@ export function useTheme(): ThemeContextValue {
       elevation: (level: 1 | 2 | 3 = 1) => elevationFor(colors, level),
       setMode: () => undefined,
       toggle: () => undefined,
+      setPrimaryColor: () => undefined,
     };
   }
   return ctx;
