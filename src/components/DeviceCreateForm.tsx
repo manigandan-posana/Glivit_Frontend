@@ -3,10 +3,11 @@ import React from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/src/components/ui/Button';
+import { SearchableDropdown, type DropdownOption } from '@/src/components/ui/SearchableDropdown';
 import { TextField } from '@/src/components/ui/TextField';
 import { apiErrorMessage } from '@/src/services/apiError';
-import { useCreateDeviceMutation, type DeviceUpsertRequest } from '@/src/services/devicesApi';
-import { useGetGroupsQuery, useGetProjectsQuery } from '@/src/services/operationsApi';
+import { useCreateDeviceMutation, useUpdateDeviceMutation, type DeviceUpsertRequest } from '@/src/services/devicesApi';
+import { useGetGroupsQuery, useGetProjectsQuery, useGetUsersQuery } from '@/src/services/operationsApi';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
@@ -18,6 +19,7 @@ type Draft = {
   simNumber: string;
   simProvider: string;
   simApn: string;
+  driverId?: number;
   driverName: string;
   driverPhone: string;
   projectId?: number;
@@ -36,20 +38,42 @@ const CATEGORIES: {
   label: string;
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 }[] = [
-  { id: 'CAR', label: 'Car', icon: 'car' },
-  { id: 'TRUCK', label: 'Truck', icon: 'truck' },
-  { id: 'BUS', label: 'Bus', icon: 'bus' },
-  { id: 'BIKE', label: 'Bike', icon: 'motorbike' },
-  { id: 'TRAILER', label: 'Trailer', icon: 'truck-trailer' },
-  { id: 'ASSET', label: 'Asset', icon: 'package-variant-closed' },
-];
+    { id: 'CAR', label: 'Car', icon: 'car' },
+    { id: 'TRUCK', label: 'Truck', icon: 'truck' },
+    { id: 'BUS', label: 'Bus', icon: 'bus' },
+    { id: 'BIKE', label: 'Bike', icon: 'motorbike' },
+    { id: 'TRAILER', label: 'Trailer', icon: 'truck-trailer' },
+    { id: 'ASSET', label: 'Asset', icon: 'package-variant-closed' },
+  ];
 
 const IMEI_LENGTH = 15;
 
-function emptyDraft(): Draft {
+function emptyDraft(initialDevice?: any): Draft {
+  if (initialDevice) {
+    return {
+      category: initialDevice.category || 'CAR',
+      distanceUnit: (initialDevice.distanceUnit as 'KM' | 'MI') || 'KM',
+      driverId: initialDevice.driverId ?? undefined,
+      driverName: initialDevice.driverName || '',
+      driverPhone: initialDevice.driverPhone || '',
+      expiryDate: initialDevice.expiryDate ? String(initialDevice.expiryDate).slice(0, 10) : oneYearFromNow(),
+      groupId: initialDevice.groupId ?? undefined,
+      imei: initialDevice.imei || '',
+      model: initialDevice.model || '',
+      name: initialDevice.name || '',
+      projectId: initialDevice.projectId ?? undefined,
+      remarks: initialDevice.remarks || '',
+      simApn: initialDevice.simApn || '',
+      simNumber: initialDevice.simNumber || '',
+      simProvider: initialDevice.simProvider || '',
+      speedUnit: (initialDevice.speedUnit as 'KMH' | 'MPH') || 'KMH',
+      timezone: initialDevice.timezone || 'Asia/Kolkata',
+    };
+  }
   return {
     category: 'CAR',
     distanceUnit: 'KM',
+    driverId: undefined,
     driverName: '',
     driverPhone: '',
     expiryDate: oneYearFromNow(),
@@ -67,30 +91,49 @@ function emptyDraft(): Draft {
   };
 }
 
-/**
- * Create GPS Device.
- *
- * Grouped into the four things an installer actually fills in — identity, SIM,
- * assignment and subscription — with the optional sections collapsed by default
- * so the required path (name + IMEI + type) is a short form. Validation is
- * inline and runs before the request, so an invalid IMEI never round-trips.
- */
-export function DeviceCreateForm() {
+type DeviceCreateFormProps = {
+  initialDevice?: any;
+  onSuccess?: () => void;
+  onCancel?: () => void;
+};
+
+export function DeviceCreateForm({ initialDevice, onSuccess, onCancel }: DeviceCreateFormProps = {}) {
   const { colors: c } = useTheme();
   const styles = React.useMemo(() => makeStyles(c), [c]);
-  const [createDevice, { isLoading }] = useCreateDeviceMutation();
+  const [createDevice, { isLoading: isCreating }] = useCreateDeviceMutation();
+  const [updateDevice, { isLoading: isUpdating }] = useUpdateDeviceMutation();
+  const isLoading = isCreating || isUpdating;
+
   const projects = useGetProjectsQuery();
   const groups = useGetGroupsQuery();
+  const driversQuery = useGetUsersQuery({ role: 'DRIVER', size: 100 });
 
-  const [draft, setDraft] = React.useState<Draft>(emptyDraft);
+  const [draft, setDraft] = React.useState<Draft>(() => emptyDraft(initialDevice));
   const [errors, setErrors] = React.useState<FieldErrors>({});
-  const [showOptional, setShowOptional] = React.useState(false);
-  const [savedName, setSavedName] = React.useState<string | null>(null);
+
+  const isEditing = Boolean(initialDevice?.id);
+
+  const driverOptions: DropdownOption[] = React.useMemo(() => {
+    return (driversQuery.data?.content ?? [])
+      .filter((user) => user.status === 'ACTIVE')
+      .map((user) => ({
+        id: user.id,
+        label: user.name,
+        subLabel: user.username,
+        phone: user.mobile ?? undefined,
+      }));
+  }, [driversQuery.data]);
+
+  const projectOptions: DropdownOption[] = React.useMemo(() => {
+    return (projects.data ?? []).map((project) => ({
+      id: project.id,
+      label: project.name,
+    }));
+  }, [projects.data]);
 
   const set = React.useCallback(<K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
     setErrors((current) => (key in current ? { ...current, [key]: undefined } : current));
-    setSavedName(null);
   }, []);
 
   const imeiDigits = draft.imei.replace(/\D/g, '');
@@ -120,6 +163,7 @@ export function DeviceCreateForm() {
     const body: DeviceUpsertRequest = {
       category: draft.category,
       distanceUnit: draft.distanceUnit,
+      driverId: draft.driverId,
       driverName: trimmed(draft.driverName),
       driverPhone: trimmed(draft.driverPhone),
       expiryDate: trimmed(draft.expiryDate),
@@ -137,15 +181,20 @@ export function DeviceCreateForm() {
     };
 
     try {
-      const created = await createDevice(body).unwrap();
-      setSavedName(created.name);
+      if (initialDevice?.id) {
+        await updateDevice({ id: initialDevice.id, body }).unwrap();
+      } else {
+        await createDevice(body).unwrap();
+      }
       setDraft(emptyDraft());
       setErrors({});
-      setShowOptional(false);
+      onSuccess?.();
     } catch (err) {
-      Alert.alert('Device not saved', apiErrorMessage(err));
+      Alert.alert(isEditing ? 'Device not updated' : 'Device not saved', apiErrorMessage(err));
     }
-  }, [createDevice, draft, validate]);
+  }, [createDevice, updateDevice, draft, validate, initialDevice, isEditing, onSuccess]);
+
+  const showOptional = true;
 
   return (
     <View style={styles.root}>
@@ -154,19 +203,14 @@ export function DeviceCreateForm() {
           <MaterialCommunityIcons color={c.primary} name="cellphone-link" size={26} />
         </View>
         <View style={styles.heroText}>
-          <Text style={styles.heroTitle}>Create GPS Device</Text>
+          <Text style={styles.heroTitle}>{isEditing ? 'Edit GPS Device' : 'Create GPS Device'}</Text>
           <Text style={styles.heroSubtitle}>
-            Register a tracker and bind it to a vehicle. Only the name, IMEI and type are required.
+            {isEditing
+              ? 'Update device attributes, driver assignment, or SIM details.'
+              : 'Register a tracker and bind it to a vehicle. Only the name, IMEI and type are required.'}
           </Text>
         </View>
       </View>
-
-      {savedName ? (
-        <View style={styles.successBanner}>
-          <MaterialCommunityIcons color={c.primary} name="check-circle" size={20} />
-          <Text style={styles.successText}>{savedName} was created and is ready to report.</Text>
-        </View>
-      ) : null}
 
       <FormSection icon="identifier" step={1} title="Device identity">
         <TextField
@@ -228,23 +272,6 @@ export function DeviceCreateForm() {
         </View>
       </FormSection>
 
-      <Pressable
-        accessibilityLabel={showOptional ? 'Hide optional details' : 'Show optional details'}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: showOptional }}
-        onPress={() => setShowOptional((current) => !current)}
-        style={styles.optionalToggle}>
-        <MaterialCommunityIcons color={c.primary} name="tune-variant" size={20} />
-        <Text style={styles.optionalToggleText}>
-          {showOptional ? 'Hide optional details' : 'Add SIM, assignment and subscription'}
-        </Text>
-        <MaterialCommunityIcons
-          color={c.textMuted}
-          name={showOptional ? 'chevron-up' : 'chevron-down'}
-          size={20}
-        />
-      </Pressable>
-
       {showOptional ? (
         <>
           <FormSection icon="sim" step={2} title="SIM & connectivity">
@@ -283,11 +310,30 @@ export function DeviceCreateForm() {
           </FormSection>
 
           <FormSection icon="account-group-outline" step={3} title="Assignment">
-            <TextField
-              label="Driver name"
-              onChangeText={(value) => set('driverName', value)}
-              placeholder="Arun Kumar"
-              value={draft.driverName}
+            <SearchableDropdown
+              emptyText="No active drivers found"
+              label="Driver"
+              loading={driversQuery.isLoading}
+              onSelect={(option) => {
+                if (option) {
+                  setDraft((current) => ({
+                    ...current,
+                    driverId: option.id,
+                    driverName: option.label,
+                    driverPhone: option.phone || current.driverPhone,
+                  }));
+                } else {
+                  setDraft((current) => ({
+                    ...current,
+                    driverId: undefined,
+                    driverName: '',
+                    driverPhone: '',
+                  }));
+                }
+              }}
+              options={driverOptions}
+              placeholder="Select driver..."
+              selectedId={draft.driverId}
             />
             <TextField
               error={errors.driverPhone}
@@ -297,11 +343,18 @@ export function DeviceCreateForm() {
               placeholder="+91 98765 43210"
               value={draft.driverPhone}
             />
-            <FieldLabel>Project</FieldLabel>
-            <OptionRow
-              emptyText="No projects yet"
-              onSelect={(id) => set('projectId', id)}
-              options={(projects.data ?? []).map((project) => ({ id: project.id, label: project.name }))}
+            <SearchableDropdown
+              emptyText="No projects created yet"
+              label="Project"
+              loading={projects.isLoading}
+              onSelect={(option) => {
+                setDraft((current) => ({
+                  ...current,
+                  projectId: option ? option.id : undefined,
+                }));
+              }}
+              options={projectOptions}
+              placeholder="Select project..."
               selectedId={draft.projectId}
             />
             <FieldLabel>Group</FieldLabel>
@@ -373,7 +426,7 @@ export function DeviceCreateForm() {
         <Button
           disabled={!requiredComplete}
           icon="content-save-outline"
-          label="Save device"
+          label={isEditing ? 'Update device' : 'Save device'}
           loading={isLoading}
           onPress={() => void submit()}
         />

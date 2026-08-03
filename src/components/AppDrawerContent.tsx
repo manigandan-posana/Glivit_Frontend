@@ -3,12 +3,11 @@ import { type DrawerContentComponentProps } from '@react-navigation/drawer';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 
 import { P } from '@/src/constants/permissions';
-import { apiErrorMessage } from '@/src/services/apiError';
 import { authStorage } from '@/src/services/authStorage';
 import { useLogoutMutation } from '@/src/services/authApi';
 import { baseApi } from '@/src/services/baseApi';
@@ -51,14 +50,15 @@ const ACCOUNT_LINKS: DrawerLink[] = [
 ];
 
 function HeaderBackground() {
+  const { colors: c } = useTheme();
   return (
     <View style={StyleSheet.absoluteFill}>
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0F9D58' }]} />
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: c.primary }]} />
       <Svg height="100%" preserveAspectRatio="none" viewBox="0 0 300 200" width="100%">
         <Defs>
           <LinearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <Stop offset="0%" stopColor="#0B8043" stopOpacity={0.5} />
-            <Stop offset="100%" stopColor="#066935" stopOpacity={0.5} />
+            <Stop offset="0%" stopColor="#0B8043" stopOpacity={0.35} />
+            <Stop offset="100%" stopColor="#066935" stopOpacity={0.35} />
           </LinearGradient>
         </Defs>
         <Rect fill="url(#bgGrad)" height="200" width="300" x="0" y="0" />
@@ -113,7 +113,10 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
     links.filter((link) => {
       const allowed = !link.permission || permissionMap[link.permission];
       const moduleEnabled =
-        !link.module || enabledModules.size === 0 || enabledModules.has(link.module);
+        !link.module ||
+        enabledModules.size === 0 ||
+        enabledModules.has(link.module) ||
+        (link.module === 'geofences' && (enabledModules.has('geofencing') || enabledModules.has('geofences')));
       return allowed && moduleEnabled;
     });
 
@@ -142,13 +145,6 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
         },
       },
     ]);
-  };
-
-  const contactProvider = () => {
-    if (tenant?.supportPhone) Linking.openURL(`tel:${tenant.supportPhone}`).catch(() => undefined);
-    else if (tenant?.supportEmail)
-      Linking.openURL(`mailto:${tenant.supportEmail}`).catch(() => undefined);
-    else Alert.alert('Contact Service Provider', apiErrorMessage(null, 'No support contact configured.'));
   };
 
   const displayName = user?.name ?? user?.username ?? 'Demo Admin';
@@ -221,7 +217,6 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
             onPress={() => go(link.route)}
           />
         ))}
-        <DrawerRow icon="headset" label="Contact Service Provider" onPress={contactProvider} />
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.xs }]}>

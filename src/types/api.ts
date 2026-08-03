@@ -98,13 +98,10 @@ export type TenantSummary = {
 
 export type TenantCreateRequest = {
   name: string;
-  tenantId: string;
   companyName: string;
   adminName: string;
   adminEmail: string;
   adminPhone: string;
-  password: string;
-  confirmPassword: string;
   status: TenantStatus;
 };
 
@@ -136,6 +133,11 @@ export type DeviceSummary = {
   category: string;
   vehicleId?: number | null;
   vehicleName?: string | null;
+  projectId?: number | null;
+  groupId?: number | null;
+  simNumber?: string | null;
+  simProvider?: string | null;
+  driverName?: string | null;
   state: string;
   latitude?: number | null;
   longitude?: number | null;
@@ -163,6 +165,7 @@ export type DeviceDetail = DeviceSummary & {
   simNumber?: string | null;
   simProvider?: string | null;
   simApn?: string | null;
+  driverId?: number | null;
   driverName?: string | null;
   driverPhone?: string | null;
   remarks?: string | null;

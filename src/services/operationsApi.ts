@@ -70,6 +70,7 @@ export type CommandRequest = {
 export type SettingsRequest = Partial<Omit<SettingsDto, 'updatedAt'>>;
 
 export const operationsApi = baseApi.injectEndpoints({
+  overrideExisting: true,
   endpoints: (build) => ({
     getProjects: build.query<ProjectDto[], void>({
       query: () => ({ url: '/projects' }),
@@ -79,6 +80,15 @@ export const operationsApi = baseApi.injectEndpoints({
     createProject: build.mutation<ProjectDto, ProjectRequest>({
       query: (body) => ({ url: '/projects', method: 'POST', body }),
       transformResponse: (response: ApiResponse<ProjectDto>) => unwrap(response),
+      invalidatesTags: ['Project'],
+    }),
+    updateProject: build.mutation<ProjectDto, { id: number; body: ProjectRequest }>({
+      query: ({ id, body }) => ({ url: `/projects/${id}`, method: 'PUT', body }),
+      transformResponse: (response: ApiResponse<ProjectDto>) => unwrap(response),
+      invalidatesTags: ['Project'],
+    }),
+    deleteProject: build.mutation<void, number>({
+      query: (id) => ({ url: `/projects/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Project'],
     }),
     getGroups: build.query<GroupDto[], void>({
@@ -91,10 +101,10 @@ export const operationsApi = baseApi.injectEndpoints({
       transformResponse: (response: ApiResponse<GroupDto>) => unwrap(response),
       invalidatesTags: ['Group'],
     }),
-    getUsers: build.query<PageResponse<ManagedUserDto>, { search?: string; page?: number; size?: number }>({
-      query: ({ search, page = 0, size = 20 }) => ({
+    getUsers: build.query<PageResponse<ManagedUserDto>, { search?: string; role?: Role; page?: number; size?: number }>({
+      query: ({ search, role, page = 0, size = 20 }) => ({
         url: '/users',
-        params: { ...(search ? { search } : {}), page, size },
+        params: { ...(search ? { search } : {}), ...(role ? { role } : {}), page, size },
       }),
       transformResponse: (response: ApiResponse<PageResponse<ManagedUserDto>>) => unwrap(response),
       providesTags: ['User'],
@@ -104,6 +114,15 @@ export const operationsApi = baseApi.injectEndpoints({
       transformResponse: (response: ApiResponse<ManagedUserDto>) => unwrap(response),
       // Creating a user with the DRIVER role provisions that user's driver
       // record server-side, so the driver-backed caches refresh too.
+      invalidatesTags: ['User', 'Driver', 'Audit'],
+    }),
+    updateUser: build.mutation<ManagedUserDto, { id: number; body: UserRequest }>({
+      query: ({ id, body }) => ({ url: `/users/${id}`, method: 'PUT', body }),
+      transformResponse: (response: ApiResponse<ManagedUserDto>) => unwrap(response),
+      invalidatesTags: ['User', 'Driver', 'Audit'],
+    }),
+    deleteUser: build.mutation<void, number>({
+      query: (id) => ({ url: `/users/${id}`, method: 'DELETE' }),
       invalidatesTags: ['User', 'Driver', 'Audit'],
     }),
     getEvents: build.query<PageResponse<EventDto>, { page?: number; size?: number; deviceId?: number }>({
@@ -188,7 +207,6 @@ export const operationsApi = baseApi.injectEndpoints({
       providesTags: ['Audit'],
     }),
   }),
-  overrideExisting: false,
 });
 
 export const {
@@ -196,10 +214,14 @@ export const {
   useCreateGeofenceMutation,
   useCreateGroupMutation,
   useCreateProjectMutation,
+  useUpdateProjectMutation,
+  useDeleteProjectMutation,
   useCreateReportMutation,
   useCreateUserMutation,
   useDeleteGeofenceMutation,
+  useDeleteUserMutation,
   useUpdateGeofenceMutation,
+  useUpdateUserMutation,
   useGetAuditQuery,
   useGetCommandsQuery,
   useGetEventsQuery,

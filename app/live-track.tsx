@@ -29,6 +29,7 @@ import {
 } from '@/src/components/Fleet3DOverlay';
 import {
   FleetWebMap,
+  type FleetWebMapHandle,
   type WebMapMarker,
   type WebMapProjection,
 } from '@/src/components/FleetWebMap';
@@ -105,13 +106,13 @@ const CINEMATIC_CAMERAS: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
 }[] = [
-  { id: 'cinematic', icon: 'movie-open', label: 'Cinematic' },
-  { id: 'follow', icon: 'navigation-variant', label: 'Follow' },
-  { id: 'chase', icon: 'car-sports', label: 'Chase' },
-  { id: 'drone', icon: 'orbit', label: 'Drone' },
-  { id: 'top', icon: 'crosshairs-gps', label: 'Top' },
-  { id: 'overview', icon: 'fit-to-page-outline', label: 'Overview' },
-];
+    { id: 'cinematic', icon: 'movie-open', label: 'Cinematic' },
+    { id: 'follow', icon: 'navigation-variant', label: 'Follow' },
+    { id: 'chase', icon: 'car-sports', label: 'Chase' },
+    { id: 'drone', icon: 'orbit', label: 'Drone' },
+    { id: 'top', icon: 'crosshairs-gps', label: 'Top' },
+    { id: 'overview', icon: 'fit-to-page-outline', label: 'Overview' },
+  ];
 
 const CONTACT_PHONE = '+919876543210';
 
@@ -159,18 +160,18 @@ const ROUTE_TOOLS: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
 }[] = [
-  { id: 'follow', icon: 'navigation-variant', label: 'Follow' },
-  { id: 'location', icon: 'crosshairs-gps', label: 'Center' },
-  { id: 'refresh', icon: 'refresh', label: 'Restart' },
-  { id: 'parking', icon: 'parking', label: 'Park' },
-  { id: 'traffic', icon: 'road-variant', label: 'Route' },
-  { id: 'mapType', icon: 'layers-outline', label: 'Map style' },
-  { id: 'night', icon: 'weather-night', label: 'Night' },
-  { id: 'direction', icon: 'map-marker-path', label: 'Next' },
-  { id: 'history', icon: 'history', label: 'History' },
-  { id: 'alert', icon: 'alert-outline', label: 'Alert' },
-  { id: 'call', icon: 'phone-outline', label: 'Support' },
-];
+    { id: 'follow', icon: 'navigation-variant', label: 'Follow' },
+    { id: 'location', icon: 'crosshairs-gps', label: 'Center' },
+    { id: 'refresh', icon: 'refresh', label: 'Restart' },
+    { id: 'parking', icon: 'parking', label: 'Park' },
+    { id: 'traffic', icon: 'road-variant', label: 'Route' },
+    { id: 'mapType', icon: 'layers-outline', label: 'Map style' },
+    { id: 'night', icon: 'weather-night', label: 'Night' },
+    { id: 'direction', icon: 'map-marker-path', label: 'Next' },
+    { id: 'history', icon: 'history', label: 'History' },
+    { id: 'alert', icon: 'alert-outline', label: 'Alert' },
+    { id: 'call', icon: 'phone-outline', label: 'Support' },
+  ];
 
 // The one and only tracking-route colour. Kept as a single constant so the live
 // route can never drift into gradients, traffic/speed tints, or a second hue.
@@ -334,7 +335,7 @@ export default function VehicleTrackerScreen() {
   // nothing is ever drawn ahead of the vehicle. Recorded playback lives entirely
   // on the separate Route Playback / History screen.
   const liveEnabled = validDeviceId;
-  const live = useLivePositions(liveEnabled ? deviceId : undefined);
+  const live = useLivePositions(liveEnabled ? deviceId : undefined, deviceDetail?.state);
   // Fleet roster for the in-screen vehicle switcher. Selecting a different
   // vehicle re-points every data source on this screen (device detail, live SSE
   // stream, route buffer, camera) rather than only swapping the 3D model.
@@ -375,6 +376,7 @@ export default function VehicleTrackerScreen() {
   const insets = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
   const mapRef = useRef<MapView>(null);
+  const webMapRef = useRef<FleetWebMapHandle>(null);
   const fitWholeRouteRef = useRef<() => boolean>(() => false);
   const mapReadyRef = useRef(false);
   const mapLayoutReadyRef = useRef(false);
@@ -519,11 +521,12 @@ export default function VehicleTrackerScreen() {
   const isLowAccuracy = live.quality === 'low_accuracy';
   const hasInvalidLiveFix = live.quality === 'invalid' && !live.latest;
   const liveState = live.latest?.state?.trim().toUpperCase();
+  const isStopped = liveState === 'STOPPED' || (!liveState && deviceDetail?.state === 'STOPPED');
   // A remotely cut or locked vehicle cannot be moving whatever the last GPS fix
   // said, so immobilisation outranks the live stream. The flag is refetched when
   // a command invalidates the device cache.
   const isImmobilised = Boolean(deviceDetail?.immobilised || deviceDetail?.locked);
-  const currentSpeed = isImmobilised ? 0 : reportedSpeed;
+  const currentSpeed = (isImmobilised || isStopped) ? 0 : reportedSpeed;
   const latestIgnition =
     live.latest?.ignition ?? sample?.ignition ?? deviceDetail?.ignition ?? null;
   const isStoppedOff = currentSpeed === 0 && latestIgnition === false;
@@ -533,18 +536,16 @@ export default function VehicleTrackerScreen() {
       ? deviceDetail?.immobilised
         ? 'Engine cut'
         : 'Locked'
-      : isStoppedOff
+      : (isStopped || isStoppedOff)
         ? 'Stopped'
-      : liveEnabled && (!live.connected || isLiveStale)
-        ? 'Offline'
-        : hasInvalidLiveFix
-          ? 'GPS error'
-          : isLowAccuracy
-            ? 'Low accuracy'
-            : liveState === 'IDLE'
-              ? 'Idle'
-              : liveState === 'STOPPED'
-                ? 'Stopped'
+        : liveEnabled && (!live.connected || isLiveStale)
+          ? 'Offline'
+          : hasInvalidLiveFix
+            ? 'GPS error'
+            : isLowAccuracy
+              ? 'Low accuracy'
+              : liveState === 'IDLE'
+                ? 'Idle'
                 : 'Running';
   const statusColor =
     status === 'Running'
@@ -704,7 +705,7 @@ export default function VehicleTrackerScreen() {
         metrics: [
           { label: 'Speed', value: `${currentSpeed} km/h` },
           { label: 'Covered', value: `${coveredKmText} km` },
-          { label: 'Ping', value: pingTime },
+          { label: 'Ping', value: `${pingTime.dateText}, ${pingTime.timeText}` },
         ],
         summary: 'Live tracking resumed and the camera is following the vehicle.',
         title: 'Refresh',
@@ -807,7 +808,7 @@ export default function VehicleTrackerScreen() {
         metrics: [
           { label: 'Covered', value: `${coveredKmText} km` },
           { label: 'Trip', value: `${totalKmText} km` },
-          { label: 'Ping', value: pingTime },
+          { label: 'Ping', value: `${pingTime.dateText}, ${pingTime.timeText}` },
         ],
         summary: 'Opening recorded route history on the playback screen.',
         title: 'History',
@@ -1180,6 +1181,8 @@ export default function VehicleTrackerScreen() {
   const resumeCinematicTracking = useCallback(() => {
     manualInteractionRef.current = false;
     setAutoFollowSuspended(false);
+    setIsFollowing(true);
+    setIsLiveFollowing(true);
     haptic();
     if (cameraMode === 'overview') {
       setIsFollowing(false);
@@ -1187,18 +1190,21 @@ export default function VehicleTrackerScreen() {
       showToast('Overview restored');
       return;
     }
-    setIsFollowing(true);
     const { coordinate, heading: liveHeading } = liveRef.current;
-    moveCameraRef.current(
-      cameraMode,
-      coordinate.longitude,
-      coordinate.latitude,
-      liveHeading,
-      500,
-      false
-    );
-    showToast('Cinematic tracking resumed');
-  }, [cameraMode, haptic, showToast]);
+    if (useNativeMap) {
+      moveCameraRef.current(
+        cameraMode,
+        coordinate.longitude,
+        coordinate.latitude,
+        liveHeading,
+        500,
+        true
+      );
+    } else {
+      webMapRef.current?.fitAll();
+    }
+    showToast('Centered on vehicle');
+  }, [cameraMode, haptic, showToast, useNativeMap]);
 
   // ---------------------------------------------------------------------------
   // Map controls. Every handler has a stable identity so the control rail (and
@@ -1207,9 +1213,18 @@ export default function VehicleTrackerScreen() {
 
   const zoomBy = useCallback(
     async (delta: number) => {
+      haptic();
+      manualInteractionRef.current = true;
+      if (!useNativeMap) {
+        if (delta > 0) {
+          webMapRef.current?.zoomIn();
+        } else {
+          webMapRef.current?.zoomOut();
+        }
+        return;
+      }
       const instance = mapRef.current;
       if (!instance) return;
-      manualInteractionRef.current = true;
       try {
         const camera = await instance.getCamera();
         if (camera.zoom != null) {
@@ -1230,10 +1245,18 @@ export default function VehicleTrackerScreen() {
         // Camera reads can reject while the provider is laying out.
       }
     },
-    []
+    [haptic, useNativeMap]
   );
 
   const resetBearing = useCallback(async () => {
+    haptic();
+    if (!useNativeMap) {
+      webMapRef.current?.resetBearing();
+      setMapCameraHeading(0);
+      lastCameraHeadingRef.current = 0;
+      showToast('Facing north');
+      return;
+    }
     const instance = mapRef.current;
     if (!instance) return;
     try {
@@ -1245,7 +1268,7 @@ export default function VehicleTrackerScreen() {
     } catch {
       // Ignore: the camera is mid-animation.
     }
-  }, [showToast]);
+  }, [haptic, showToast, useNativeMap]);
 
   const toggleUserLocation = useCallback(async () => {
     haptic();
@@ -1254,8 +1277,7 @@ export default function VehicleTrackerScreen() {
       showToast('My location hidden');
       return;
     }
-    // Android needs an explicit runtime grant; iOS prompts via MapKit once the
-    // usage description is present and `showsUserLocation` is enabled.
+
     if (Platform.OS === 'android') {
       try {
         const granted = await PermissionsAndroid.request(
@@ -1270,14 +1292,34 @@ export default function VehicleTrackerScreen() {
         return;
       }
     }
+
     setShowsUserLocation(true);
     showToast('Showing my location');
-  }, [haptic, showToast, showsUserLocation]);
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (useNativeMap && mapRef.current) {
+            mapRef.current.animateCamera(
+              {
+                center: { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+                zoom: 15,
+              },
+              { duration: 500 }
+            );
+          }
+        },
+        () => undefined,
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+  }, [haptic, showToast, showsUserLocation, useNativeMap]);
 
   const cycleMapType = useCallback(() => {
     haptic();
     setMapType((current) => {
       const next = MAP_TYPE_ORDER[(MAP_TYPE_ORDER.indexOf(current) + 1) % MAP_TYPE_ORDER.length];
+      setIsSatelliteMode(next !== 'standard');
       showToast(MAP_TYPE_LABEL[next]);
       return next;
     });
@@ -1286,8 +1328,10 @@ export default function VehicleTrackerScreen() {
   const toggleTrafficLayer = useCallback(() => {
     haptic();
     setShowsTrafficLayer((current) => {
-      showToast(current ? 'Traffic layer off' : 'Traffic layer on');
-      return !current;
+      const next = !current;
+      setIsTrafficVisible(next);
+      showToast(next ? 'Traffic layer on' : 'Traffic layer off');
+      return next;
     });
   }, [haptic, showToast]);
 
@@ -1299,23 +1343,38 @@ export default function VehicleTrackerScreen() {
     });
   }, [haptic, showToast]);
 
-  /**
-   * react-native-maps has no Street View component, so this hands the current
-   * position to the platform Maps app in panorama mode — the closest thing to
-   * Street View that is actually available here.
-   */
-  const refreshMap = useCallback(() => {
+  const refreshMap = useCallback(async () => {
     haptic();
-    void refetchDevice();
-    void syncNativeProjectionRef.current(true);
     showToast('Refreshing live data');
-  }, [haptic, refetchDevice, showToast]);
+    try {
+      await refetchDevice();
+      if (useNativeMap) {
+        void syncNativeProjectionRef.current(true);
+      }
+      showToast('Refreshed live map');
+    } catch {
+      showToast('Refresh failed');
+    }
+  }, [haptic, refetchDevice, showToast, useNativeMap]);
 
-  const openStreetView = useCallback(() => {
+  const openStreetView = useCallback(async () => {
     haptic();
     const { coordinate } = liveRef.current;
+    if (!coordinate || (coordinate.latitude === 0 && coordinate.longitude === 0)) {
+      showToast('Location unavailable for Street View');
+      return;
+    }
     const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${coordinate.latitude},${coordinate.longitude}`;
-    Linking.openURL(url).catch(() => showToast('Street View is unavailable on this device'));
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        showToast('Street View unavailable on this device');
+      }
+    } catch {
+      showToast('Could not open Street View');
+    }
   }, [haptic, showToast]);
 
   const measureOverlay = useCallback(
@@ -1612,7 +1671,7 @@ export default function VehicleTrackerScreen() {
       setElapsedMs(to);
       return;
     }
-    if (isStoppedOff) {
+    if (isStopped || isStoppedOff) {
       setElapsedMs(to);
       return;
     }
@@ -1649,7 +1708,7 @@ export default function VehicleTrackerScreen() {
         liveTransitionFrameRef.current = null;
       }
     };
-  }, [appActive, isLiveFollowing, isStoppedOff, track.totalDurationMs]);
+  }, [appActive, isLiveFollowing, isStopped, isStoppedOff, track.totalDurationMs]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -1723,17 +1782,17 @@ export default function VehicleTrackerScreen() {
     () =>
       vehicleScreenPoint && sample
         ? [
-            {
-              heading: normalizeHeading(heading - mapCameraHeading),
-              id: 'vehicle',
-              isActive: !isStoppedOff && currentSpeed > 0,
-              selected: true,
-              speed: currentSpeed,
-              variant: carVariant,
-              x: vehicleScreenPoint.x,
-              y: vehicleScreenPoint.y,
-            },
-          ]
+          {
+            heading: normalizeHeading(heading - mapCameraHeading),
+            id: 'vehicle',
+            isActive: !isStopped && !isStoppedOff && currentSpeed > 0,
+            selected: true,
+            speed: currentSpeed,
+            variant: carVariant,
+            x: vehicleScreenPoint.x,
+            y: vehicleScreenPoint.y,
+          },
+        ]
         : [],
     [
       carVariant,
@@ -1844,9 +1903,14 @@ export default function VehicleTrackerScreen() {
 
   const isMapLoading = useNativeMap && (mapLoadState === 'loading' || !mapContainerReady);
 
-  const mapControls = useMemo<MapControl[]>(
+  const leftMapControls = useMemo<MapControl[]>(
     () => [
-      { icon: 'crosshairs-gps', label: 'Recenter on vehicle', onPress: resumeCinematicTracking },
+      {
+        active: isFollowing && !autoFollowSuspended,
+        icon: 'crosshairs-gps',
+        label: 'Recenter on vehicle',
+        onPress: resumeCinematicTracking,
+      },
       {
         active: showsUserLocation,
         icon: 'account-circle-outline',
@@ -1856,12 +1920,28 @@ export default function VehicleTrackerScreen() {
       { icon: 'plus', label: 'Zoom in', onPress: () => void zoomBy(1) },
       { icon: 'minus', label: 'Zoom out', onPress: () => void zoomBy(-1) },
       {
+        active: Math.abs(mapCameraHeading) > 0.5,
         icon: 'navigation',
         label: 'Face north',
         onPress: () => void resetBearing(),
         // The needle points at true north relative to the current camera.
         rotation: -mapCameraHeading,
       },
+    ],
+    [
+      autoFollowSuspended,
+      isFollowing,
+      mapCameraHeading,
+      resetBearing,
+      resumeCinematicTracking,
+      showsUserLocation,
+      toggleUserLocation,
+      zoomBy,
+    ]
+  );
+
+  const rightMapControls = useMemo<MapControl[]>(
+    () => [
       {
         active: mapType !== 'standard',
         icon: mapType === 'standard' ? 'layers-outline' : 'satellite-variant',
@@ -1886,18 +1966,12 @@ export default function VehicleTrackerScreen() {
     [
       cycleMapType,
       isFullScreen,
-      mapCameraHeading,
       mapType,
       openStreetView,
       refreshMap,
-      resetBearing,
-      resumeCinematicTracking,
       showsTrafficLayer,
-      showsUserLocation,
       toggleFullScreen,
       toggleTrafficLayer,
-      toggleUserLocation,
-      zoomBy,
     ]
   );
   const toggleControls = useCallback(() => setControlsExpanded((current) => !current), []);
@@ -2007,6 +2081,7 @@ export default function VehicleTrackerScreen() {
         </MapView>
       ) : (
         <FleetWebMap
+          ref={webMapRef}
           cameraMode={cameraMode}
           followSelected={isFollowing}
           mapStyle={mapStyleInfo.webStyle}
@@ -2059,90 +2134,90 @@ export default function VehicleTrackerScreen() {
       ) : null}
 
       {isFullScreen ? null : (
-      <View
-        onLayout={(event) => measureOverlay('header', event)}
-        style={[styles.headerCard, { top: headerTop }]}>
-        <Pressable
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/map'))}
-          style={styles.headerIconButton}>
-          <MaterialCommunityIcons color={BRAND.green} name="arrow-left" size={30} />
-        </Pressable>
-        <Pressable
-          accessibilityHint="Switch to another vehicle"
-          accessibilityLabel={`Tracking ${vehicleName}. Tap to change vehicle.`}
-          accessibilityRole="button"
-          onPress={openVehiclePicker}
-          style={styles.headerTextBlock}>
-          <View style={styles.headerTitleRow}>
-            <Text numberOfLines={1} style={styles.headerTitle}>
-              {vehicleName}
+        <View
+          onLayout={(event) => measureOverlay('header', event)}
+          style={[styles.headerCard, { top: headerTop }]}>
+          <Pressable
+            accessibilityLabel="Back"
+            accessibilityRole="button"
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/map'))}
+            style={styles.headerIconButton}>
+            <MaterialCommunityIcons color={BRAND.green} name="arrow-left" size={30} />
+          </Pressable>
+          <Pressable
+            accessibilityHint="Switch to another vehicle"
+            accessibilityLabel={`Tracking ${vehicleName}. Tap to change vehicle.`}
+            accessibilityRole="button"
+            onPress={openVehiclePicker}
+            style={styles.headerTextBlock}>
+            <View style={styles.headerTitleRow}>
+              <Text numberOfLines={1} style={styles.headerTitle}>
+                {vehicleName}
+              </Text>
+              {fleet.length > 1 ? (
+                <MaterialCommunityIcons color={BRAND.greenGlow} name="chevron-down" size={18} />
+              ) : null}
+            </View>
+            <Text numberOfLines={1} style={styles.headerSubtitle}>
+              {currentAddress}
             </Text>
-            {fleet.length > 1 ? (
-              <MaterialCommunityIcons color={BRAND.greenGlow} name="chevron-down" size={18} />
-            ) : null}
-          </View>
-          <Text numberOfLines={1} style={styles.headerSubtitle}>
-            {currentAddress}
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel={cinematicMode ? 'Hide cinematic controls' : 'Show cinematic map controls'}
-          accessibilityRole="button"
-          onPress={() => {
-            const next = !cinematicMode;
-            setCinematicMode(next);
-            if (next) {
-              selectCameraMode('cinematic');
-            } else {
-              haptic();
-            }
-          }}
-          style={[styles.headerIconButton, cinematicMode && styles.headerCinemaActive]}>
-          <MaterialCommunityIcons
-            color={cinematicMode ? '#07121B' : BRAND.greenGlow}
-            name={cinematicMode ? 'map-outline' : 'movie-open-play'}
-            size={25}
-          />
-        </Pressable>
-        {/* Status and the live-feed indicator share one compact column on the
+          </Pressable>
+          <Pressable
+            accessibilityLabel={cinematicMode ? 'Hide cinematic controls' : 'Show cinematic map controls'}
+            accessibilityRole="button"
+            onPress={() => {
+              const next = !cinematicMode;
+              setCinematicMode(next);
+              if (next) {
+                selectCameraMode('cinematic');
+              } else {
+                haptic();
+              }
+            }}
+            style={[styles.headerIconButton, cinematicMode && styles.headerCinemaActive]}>
+            <MaterialCommunityIcons
+              color={cinematicMode ? '#07121B' : BRAND.greenGlow}
+              name={cinematicMode ? 'map-outline' : 'movie-open-play'}
+              size={25}
+            />
+          </Pressable>
+          {/* Status and the live-feed indicator share one compact column on the
             right of the header. The LIVE badge used to be a separate pill
             floating over the map; folding it in here keeps the map clear. */}
-        <View style={styles.headerStatusColumn}>
-          <View
-            accessibilityLabel={`Vehicle status ${status}`}
-            style={[styles.statusPill, { backgroundColor: statusColor }]}>
-            <Text style={styles.statusPillText}>{status}</Text>
+          <View style={styles.headerStatusColumn}>
+            <View
+              accessibilityLabel={`Vehicle status ${status}`}
+              style={[styles.statusPill, { backgroundColor: statusColor }]}>
+              <Text style={styles.statusPillText}>{status}</Text>
+            </View>
+            {liveEnabled ? (
+              <Pressable
+                accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
+                accessibilityRole="button"
+                hitSlop={6}
+                onPress={jumpToLive}
+                style={styles.liveInlineBadge}>
+                <View
+                  style={[
+                    styles.liveDot,
+                    {
+                      backgroundColor:
+                        live.connected && !isLiveStale ? BRAND.greenGlow : BRAND.muted,
+                    },
+                  ]}
+                />
+                <Text numberOfLines={1} style={styles.liveInlineText}>
+                  {isLiveFollowing ? 'LIVE' : 'GO LIVE'}
+                  {liveAgeSec != null
+                    ? ` · ${isLowAccuracy ? 'low' : isLiveStale ? 'delayed' : formatAge(liveAgeSec)}`
+                    : live.connected
+                      ? ' · wait'
+                      : ' · off'}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
-          {liveEnabled ? (
-            <Pressable
-              accessibilityLabel={isLiveFollowing ? 'Following live' : 'Jump to live'}
-              accessibilityRole="button"
-              hitSlop={6}
-              onPress={jumpToLive}
-              style={styles.liveInlineBadge}>
-              <View
-                style={[
-                  styles.liveDot,
-                  {
-                    backgroundColor:
-                      live.connected && !isLiveStale ? BRAND.greenGlow : BRAND.muted,
-                  },
-                ]}
-              />
-              <Text numberOfLines={1} style={styles.liveInlineText}>
-                {isLiveFollowing ? 'LIVE' : 'GO LIVE'}
-                {liveAgeSec != null
-                  ? ` · ${isLowAccuracy ? 'low' : isLiveStale ? 'delayed' : formatAge(liveAgeSec)}`
-                  : live.connected
-                    ? ' · wait'
-                    : ' · off'}
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
-      </View>
       )}
 
       {autoFollowSuspended && !isFullScreen ? (
@@ -2227,92 +2302,101 @@ export default function VehicleTrackerScreen() {
           One horizontally scrollable row keeps this to a single line on every
           screen width instead of wrapping into a block that eats the map. */}
       {isFullScreen ? null : (
-      <View
-        onLayout={(event) => measureOverlay('camera', event)}
-        pointerEvents={cinematicMode ? 'none' : 'box-none'}
-        style={[
-          styles.cameraModeBar,
-          { top: cameraBarTop },
-          cinematicMode && styles.hiddenControls,
-        ]}>
-        <ScrollView
-          contentContainerStyle={styles.cameraModeContent}
-          horizontal
-          showsHorizontalScrollIndicator={false}>
-          {CAMERA_MODE_ORDER.map((mode) => {
-            const active =
-              cameraMode === mode &&
-              !autoFollowSuspended &&
-              (mode === 'overview' ? !isFollowing : isFollowing);
-            return (
-              <Pressable
-                accessibilityLabel={`${CAMERA_MODES[mode].label} camera`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                key={mode}
-                onPress={() => selectCameraMode(mode)}
-                style={({ pressed }) => [
-                  styles.cameraChip,
-                  active && styles.cameraChipActive,
-                  pressed && styles.pressedControl,
-                ]}>
-                <MaterialCommunityIcons
-                  color={active ? '#fff' : BRAND.greenGlow}
-                  name={CAMERA_MODES[mode].icon as React.ComponentProps<typeof MaterialCommunityIcons>['name']}
-                  size={16}
-                />
-                <Text style={[styles.cameraChipText, active && styles.cameraChipTextActive]}>
-                  {CAMERA_MODES[mode].label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
+        <View
+          onLayout={(event) => measureOverlay('camera', event)}
+          pointerEvents={cinematicMode ? 'none' : 'box-none'}
+          style={[
+            styles.cameraModeBar,
+            { top: cameraBarTop },
+            cinematicMode && styles.hiddenControls,
+          ]}>
+          <ScrollView
+            contentContainerStyle={styles.cameraModeContent}
+            horizontal
+            showsHorizontalScrollIndicator={false}>
+            {CAMERA_MODE_ORDER.map((mode) => {
+              const active =
+                cameraMode === mode &&
+                !autoFollowSuspended &&
+                (mode === 'overview' ? !isFollowing : isFollowing);
+              return (
+                <Pressable
+                  accessibilityLabel={`${CAMERA_MODES[mode].label} camera`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  key={mode}
+                  onPress={() => selectCameraMode(mode)}
+                  style={({ pressed }) => [
+                    styles.cameraChip,
+                    active && styles.cameraChipActive,
+                    pressed && styles.pressedControl,
+                  ]}>
+                  <MaterialCommunityIcons
+                    color={active ? '#fff' : BRAND.greenGlow}
+                    name={CAMERA_MODES[mode].icon as React.ComponentProps<typeof MaterialCommunityIcons>['name']}
+                    size={16}
+                  />
+                  <Text style={[styles.cameraChipText, active && styles.cameraChipTextActive]}>
+                    {CAMERA_MODES[mode].label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
       )}
 
       <MapControlRail
         bottom={controlRailBottom}
-        controls={mapControls}
+        controls={leftMapControls}
         expanded={controlsExpanded}
         onToggleExpanded={toggleControls}
+        side="left"
+        top={controlRailTop}
+      />
+      <MapControlRail
+        bottom={controlRailBottom}
+        controls={rightMapControls}
+        expanded={controlsExpanded}
+        onToggleExpanded={toggleControls}
+        side="right"
         top={controlRailTop}
       />
 
       {isFullScreen ? null : (
-      <LiveDetailsSheet
-        address={currentAddress}
-        alertActive={isAlertActive}
-        carVariant={carVariant}
-        coveredText={`${coveredKmText} km`}
-        expanded={sheetExpanded}
-        following={isFollowing}
-        gpsText={gpsText}
-        ignitionText={ignitionText}
-        modelLoadError={modelLoadError}
-        modelLoading={modelLoadState === 'loading'}
-        nightMode={isNightMode}
-        onClosePanel={closeOptionPanel}
-        onExpand={expandSheet}
-        onFollowLive={jumpToLive}
-        onLayout={handleSheetLayout}
-        onRouteTool={handleRouteTool}
-        onSelectModel={selectVehicleModel}
-        onToggle={toggleSheet}
-        onToggleTools={toggleTools}
-        panHandlers={sheetPanResponder.panHandlers}
-        pingTime={pingTime}
-        routeVisible={isTrafficVisible}
-        satelliteMode={isSatelliteMode}
-        selectedOptionData={selectedOptionData}
-        selectedOptionId={selectedOptionId}
-        speed={currentSpeed}
-        status={status}
-        toolsExpanded={toolsExpanded}
-        totalText={`${totalKmText} km`}
-        translateY={sheetTranslateY}
-        vehicleName={vehicleName}
-      />
+        <LiveDetailsSheet
+          address={currentAddress}
+          alertActive={isAlertActive}
+          carVariant={carVariant}
+          coveredText={`${coveredKmText} km`}
+          expanded={sheetExpanded}
+          following={isFollowing}
+          gpsText={gpsText}
+          ignitionText={ignitionText}
+          modelLoadError={modelLoadError}
+          modelLoading={modelLoadState === 'loading'}
+          nightMode={isNightMode}
+          onClosePanel={closeOptionPanel}
+          onExpand={expandSheet}
+          onFollowLive={jumpToLive}
+          onLayout={handleSheetLayout}
+          onRouteTool={handleRouteTool}
+          onSelectModel={selectVehicleModel}
+          onToggle={toggleSheet}
+          onToggleTools={toggleTools}
+          panHandlers={sheetPanResponder.panHandlers}
+          pingTime={pingTime}
+          routeVisible={isTrafficVisible}
+          satelliteMode={isSatelliteMode}
+          selectedOptionData={selectedOptionData}
+          selectedOptionId={selectedOptionId}
+          speed={currentSpeed}
+          status={status}
+          toolsExpanded={toolsExpanded}
+          totalText={`${totalKmText} km`}
+          translateY={sheetTranslateY}
+          vehicleName={vehicleName}
+        />
       )}
 
       <VehiclePickerSheet
@@ -2488,31 +2572,51 @@ type MapControlRailProps = {
   controls: MapControl[];
   expanded: boolean;
   onToggleExpanded: () => void;
+  side?: 'left' | 'right';
   top: number;
 };
 
 /**
  * Vertical map-control rail.
  *
- * Pinned to the right edge and bounded by the tracking overlays above and the
- * details sheet below, so it never sits on top of them. It scrolls internally
- * and collapses to a single button, which keeps every control reachable on
- * short screens while tracking.
+ * Pinned to the left or right edge and bounded by the tracking overlays above
+ * and the details sheet below, so it never sits on top of them. It scrolls
+ * internally and collapses to a single button, which keeps every control reachable.
  */
 const MapControlRail = memo(function MapControlRail({
   bottom,
   controls,
   expanded,
   onToggleExpanded,
+  side = 'right',
   top,
 }: MapControlRailProps) {
+  const isLeft = side === 'left';
+  const insets = useSafeAreaInsets();
+  const sideStyle = isLeft
+    ? { left: OVERLAY_GAP + 4 + insets.left, alignItems: 'flex-start' as const }
+    : { right: OVERLAY_GAP + 4 + insets.right, alignItems: 'flex-end' as const };
+  const toggleIcon = expanded
+    ? isLeft
+      ? 'chevron-left'
+      : 'chevron-right'
+    : 'tune-vertical';
+
+  const lastPressRef = useRef<number>(0);
+  const handlePress = useCallback((onPress: () => void) => {
+    const now = Date.now();
+    if (now - lastPressRef.current < 250) return;
+    lastPressRef.current = now;
+    onPress();
+  }, []);
+
   return (
-    <View pointerEvents="box-none" style={[styles.controlRail, { bottom, top }]}>
+    <View pointerEvents="box-none" style={[styles.controlRail, sideStyle, { bottom, top }]}>
       <Pressable
         accessibilityLabel={expanded ? 'Hide map controls' : 'Show map controls'}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        onPress={onToggleExpanded}
+        onPress={() => handlePress(onToggleExpanded)}
         style={({ pressed }) => [
           styles.controlButton,
           styles.controlToggle,
@@ -2520,7 +2624,7 @@ const MapControlRail = memo(function MapControlRail({
         ]}>
         <MaterialCommunityIcons
           color={BRAND.greenGlow}
-          name={expanded ? 'chevron-right' : 'tune-vertical'}
+          name={toggleIcon}
           size={20}
         />
       </Pressable>
@@ -2540,7 +2644,7 @@ const MapControlRail = memo(function MapControlRail({
                 accessibilityRole="button"
                 accessibilityState={{ selected: Boolean(control.active) }}
                 key={control.label}
-                onPress={control.onPress}
+                onPress={() => handlePress(control.onPress)}
                 style={({ pressed }) => [
                   styles.controlButton,
                   control.active && styles.controlButtonActive,
@@ -2587,7 +2691,7 @@ type LiveDetailsSheetProps = {
   onToggle: () => void;
   onToggleTools: () => void;
   panHandlers: PanResponderInstance['panHandlers'];
-  pingTime: string;
+  pingTime: { dateText: string; timeText: string };
   routeVisible: boolean;
   satelliteMode: boolean;
   selectedOptionData: RouteOptionData | null;
@@ -2733,7 +2837,12 @@ const LiveDetailsSheet = memo(function LiveDetailsSheet({
               />
             </View>
             <View style={styles.sheetStats}>
-              <Metric icon="clock-outline" label="Ping Time" value={pingTime} />
+              <Metric
+                icon="clock-outline"
+                label="Ping Time"
+                subValue={pingTime.timeText}
+                value={pingTime.dateText}
+              />
               <Metric icon="map-marker-distance" label="Covered" value={coveredText} />
               <Metric icon="flag-checkered" label="Trip" value={totalText} />
             </View>
@@ -2950,18 +3059,25 @@ function Metric({
   icon,
   label,
   value,
+  subValue,
 }: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
   value: string;
+  subValue?: string;
 }) {
   return (
     <View style={styles.metric}>
-      <MaterialCommunityIcons color={BRAND.green} name={icon} size={18} />
-      <View>
+      <MaterialCommunityIcons color={BRAND.green} name={icon} size={18} style={styles.metricIcon} />
+      <View style={styles.metricTextBlock}>
         <Text numberOfLines={1} style={styles.metricValue}>
           {value}
         </Text>
+        {subValue ? (
+          <Text numberOfLines={1} style={styles.metricValue}>
+            {subValue}
+          </Text>
+        ) : null}
         <Text numberOfLines={1} style={styles.metricLabel}>
           {label}
         </Text>
@@ -2970,19 +3086,18 @@ function Metric({
   );
 }
 
-
-
-function formatPingTime(date: Date) {
+function formatPingTime(date: Date): { dateText: string; timeText: string } {
   const day = date.getDate().toString().padStart(2, '0');
   const month = date.toLocaleString('en-US', { month: 'short' });
   const year = date.getFullYear().toString().slice(-2);
-  const time = date.toLocaleString('en-US', {
+  const dateText = `${day} ${month} ${year}`;
+  const timeText = date.toLocaleString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   });
 
-  return `${day} ${month} ${year}, ${time}`;
+  return { dateText, timeText };
 }
 
 function formatCoordinate(coordinate: Coordinate) {
@@ -3257,10 +3372,8 @@ const styles = StyleSheet.create({
     opacity: 0,
   },
   controlRail: {
-    alignItems: 'flex-end',
     gap: OVERLAY_GAP,
     position: 'absolute',
-    right: OVERLAY_GAP + 4,
     zIndex: 25,
   },
   controlScroll: { flexGrow: 0 },
@@ -3745,11 +3858,18 @@ const styles = StyleSheet.create({
     paddingTop: 2,
   },
   metric: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
     flexDirection: 'row',
-    gap: 7,
+    gap: 6,
     minHeight: 43,
+  },
+  metricIcon: {
+    marginTop: 2,
+  },
+  metricTextBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   metricValue: {
     color: '#EDF5FB',

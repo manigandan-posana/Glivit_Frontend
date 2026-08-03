@@ -102,6 +102,56 @@ function labelDate(dateStr: string): string {
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
+/** Format range label for header trigger (e.g. "Today", "28 Jul", or "28 Jul – 01 Aug"). */
+function formatRangeHeaderLabel(fromStr: string, toStr: string): string {
+  const today = todayStr();
+  if (fromStr === today && toStr === today) return 'Today';
+  const yest = shiftDate(today, -1);
+  if (fromStr === yest && toStr === yest) return 'Yesterday';
+  if (fromStr === toStr) return labelDate(fromStr);
+
+  const dFrom = new Date(`${fromStr}T12:00:00`);
+  const dTo = new Date(`${toStr}T12:00:00`);
+  const fromLbl = dFrom.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  const toLbl = dTo.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return `${fromLbl} – ${toLbl}`;
+}
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+function getCalendarDays(year: number, month: number) {
+  const firstDay = new Date(year, month, 1).getDay(); // 0 = Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days: { year: number; month: number; day: number; dateStr: string; currentMonth: boolean }[] = [];
+
+  const prevMonthDays = new Date(year, month, 0).getDate();
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const d = prevMonthDays - i;
+    const prevM = month === 0 ? 11 : month - 1;
+    const prevY = month === 0 ? year - 1 : year;
+    const dateStr = `${prevY}-${String(prevM + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    days.push({ year: prevY, month: prevM, day: d, dateStr, currentMonth: false });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    days.push({ year, month, day: d, dateStr, currentMonth: true });
+  }
+
+  const remaining = 42 - days.length;
+  for (let d = 1; d <= remaining; d++) {
+    const nextM = month === 11 ? 0 : month + 1;
+    const nextY = month === 11 ? year + 1 : year;
+    const dateStr = `${nextY}-${String(nextM + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    days.push({ year: nextY, month: nextM, day: d, dateStr, currentMonth: false });
+  }
+
+  return days;
+}
+
 export default function TripPlaybackScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -127,14 +177,25 @@ export default function TripPlaybackScreen() {
     return modelForVehicle(params.category, params.deviceId ?? '0');
   }, [preferredModel, params.category, params.deviceId]);
 
-  // Date filter — defaults to today. Shifting builds `from` / `to` ISO strings
-  // so the backend (and demo) anchor their data to the selected calendar day.
-  const [selectedDate, setSelectedDate] = useState(todayStr);
+  // Date-range filter — defaults to today.
   const today = todayStr();
-  const isPast = selectedDate < today;
+  const [activeFromDate, setActiveFromDate] = useState(today);
+  const [activeToDate, setActiveToDate] = useState(today);
 
-  const fromIso = useMemo(() => `${selectedDate}T00:00:00.000Z`, [selectedDate]);
-  const toIso = useMemo(() => `${selectedDate}T23:59:59.999Z`, [selectedDate]);
+  // Modal draft state
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [draftFromDate, setDraftFromDate] = useState(today);
+  const [draftToDate, setDraftToDate] = useState(today);
+  const [pickerTarget, setPickerTarget] = useState<'from' | 'to'>('from');
+
+  // Calendar month/year navigation state
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
+
+  const fromIso = useMemo(() => `${activeFromDate}T00:00:00.000Z`, [activeFromDate]);
+  const toIso = useMemo(() => `${activeToDate}T23:59:59.999Z`, [activeToDate]);
+
+  const isInvalidRange = draftFromDate > draftToDate;
 
   const { data, isFetching, isError, error, refetch } = useGetDevicePlaybackQuery(
     { deviceId, from: fromIso, to: toIso },
@@ -200,18 +261,13 @@ export default function TripPlaybackScreen() {
   const showLoading = isFetching && !data;
 
   /**
-   * Rewind whenever the loaded day changes.
-   *
-   * The clock, covered distance, progress bar and the vehicle's position are all
-   * derived from `progressRef`, so resetting it here is what moves the vehicle
-   * back to the start of the newly selected day's route instead of leaving it
-   * parked at the previous day's finishing position.
+   * Rewind whenever the loaded date range changes.
    */
   useEffect(() => {
     progressRef.current = 0;
     setUi(0);
     setPlaying(hasTrack);
-  }, [data, hasTrack, selectedDate]);
+  }, [data, hasTrack, activeFromDate, activeToDate]);
 
   // Real trip duration (for the clock readout) and event tick fractions.
   const timing = useMemo(() => {
@@ -300,14 +356,59 @@ export default function TripPlaybackScreen() {
   }, [haptic, restart]);
   const handleMapReady = useCallback(() => setMapReady(true), []);
 
-  // Reset + refetch when the user changes the date.
-  const changeDate = useCallback((delta: number) => {
-    const next = shiftDate(selectedDate, delta);
-    if (next > today) return; // can't go future
-    setSelectedDate(next);
-    seek(0);
-    setPlaying(false);
-  }, [selectedDate, today]);
+  const openFilterModal = useCallback(() => {
+    haptic();
+    setDraftFromDate(activeFromDate);
+    setDraftToDate(activeToDate);
+    const targetDate = new Date(`${activeFromDate}T12:00:00`);
+    if (!Number.isNaN(targetDate.getTime())) {
+      setCalYear(targetDate.getFullYear());
+      setCalMonth(targetDate.getMonth());
+    }
+    setShowFilterModal(true);
+  }, [activeFromDate, activeToDate, haptic]);
+
+  const applyFilter = useCallback(() => {
+    if (isInvalidRange) return;
+    haptic();
+    setActiveFromDate(draftFromDate);
+    setActiveToDate(draftToDate);
+    setShowFilterModal(false);
+    progressRef.current = 0;
+    setUi(0);
+  }, [draftFromDate, draftToDate, haptic, isInvalidRange]);
+
+  const resetFilter = useCallback(() => {
+    haptic();
+    setDraftFromDate(today);
+    setDraftToDate(today);
+    setActiveFromDate(today);
+    setActiveToDate(today);
+    setShowFilterModal(false);
+    progressRef.current = 0;
+    setUi(0);
+  }, [haptic, today]);
+
+  const selectPreset = useCallback((preset: 'today' | 'yesterday' | 'week' | 'month') => {
+    haptic();
+    const now = todayStr();
+    if (preset === 'today') {
+      setDraftFromDate(now);
+      setDraftToDate(now);
+    } else if (preset === 'yesterday') {
+      const yest = shiftDate(now, -1);
+      setDraftFromDate(yest);
+      setDraftToDate(yest);
+    } else if (preset === 'week') {
+      setDraftFromDate(shiftDate(now, -6));
+      setDraftToDate(now);
+    } else if (preset === 'month') {
+      const d = new Date();
+      const firstOfMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      setDraftFromDate(firstOfMonth);
+      setDraftToDate(now);
+    }
+  }, [haptic]);
 
   if (!Number.isFinite(deviceId)) {
     return <Center text="No vehicle selected." />;
@@ -361,8 +462,10 @@ export default function TripPlaybackScreen() {
               <MaterialCommunityIcons color={G.sub} name="map-marker-off-outline" size={44} />
               <Text style={styles.placeholderTitle}>No history available</Text>
               <Text style={styles.placeholderText}>
-                {labelDate(selectedDate)} has no recorded trip for this vehicle. Use the arrows
-                above to pick another day.
+                {activeFromDate === activeToDate
+                  ? `${labelDate(activeFromDate)} has no recorded trip for this vehicle.`
+                  : `No recorded trips between ${labelDate(activeFromDate)} and ${labelDate(activeToDate)}.`}
+                {' Use the filter above to select another date range.'}
               </Text>
             </>
           )}
@@ -387,38 +490,22 @@ export default function TripPlaybackScreen() {
                   : 'No history available'}
           </Text>
         </View>
-        {/* Route-history date selector. Always mounted — including while the
-            selected day is loading, errored or empty — so the arrows can always
-            move to another day. */}
-        <View style={styles.datePicker}>
-          <Pressable
-            accessibilityLabel="Previous day"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => changeDate(-1)}
-            style={styles.dateArrow}>
-            <MaterialCommunityIcons color={G.text} name="chevron-left" size={18} />
-          </Pressable>
+        {/* Date-range filter trigger button. Always mounted so range can be changed anytime. */}
+        <Pressable
+          accessibilityLabel="Filter date range"
+          accessibilityRole="button"
+          onPress={openFilterModal}
+          style={styles.rangeFilterTrigger}>
+          <MaterialCommunityIcons color={colors.primary} name="calendar-range" size={16} />
           {isFetching ? (
-            <View style={styles.dateLabelSlot}>
-              <ActivityIndicator color={colors.primary} size="small" />
-            </View>
+            <ActivityIndicator color={colors.primary} size="small" style={{ marginHorizontal: 4 }} />
           ) : (
-            <Text numberOfLines={1} style={styles.dateLabel}>
-              {labelDate(selectedDate)}
+            <Text numberOfLines={1} style={styles.rangeFilterTriggerText}>
+              {formatRangeHeaderLabel(activeFromDate, activeToDate)}
             </Text>
           )}
-          <Pressable
-            accessibilityLabel="Next day"
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !isPast }}
-            disabled={!isPast}
-            hitSlop={8}
-            onPress={() => changeDate(1)}
-            style={[styles.dateArrow, !isPast && { opacity: 0.3 }]}>
-            <MaterialCommunityIcons color={G.text} name="chevron-right" size={18} />
-          </Pressable>
-        </View>
+          <MaterialCommunityIcons color={G.sub} name="chevron-down" size={14} />
+        </Pressable>
         <Pressable
           accessibilityLabel="Reload trip history"
           accessibilityRole="button"
@@ -436,9 +523,9 @@ export default function TripPlaybackScreen() {
 
       {/* Scene, model and camera controls only make sense over a real route. */}
       {hasTrack ? (
-      <View
-        pointerEvents="none"
-        style={[styles.sceneBadge, { top: insets.top + 68 }]}>
+        <View
+          pointerEvents="none"
+          style={[styles.sceneBadge, { top: insets.top + 68 }]}>
           <View style={styles.sceneSignal} />
           <View>
             <Text style={styles.sceneEyebrow}>
@@ -455,44 +542,44 @@ export default function TripPlaybackScreen() {
             name="map-outline"
             size={16}
           />
-      </View>
+        </View>
       ) : null}
 
       {hasTrack ? (
-      <View style={[styles.carPicker, { top: insets.top + 116 }]}>
-        <VehicleModelPicker
-          compact
-          errorMessage={modelLoadError}
-          loading={modelLoadState === 'loading'}
-          value={carVariant}
-          onChange={selectVehicleModel}
-          category={params.category}
-        />
-      </View>
+        <View style={[styles.carPicker, { top: insets.top + 116 }]}>
+          <VehicleModelPicker
+            compact
+            errorMessage={modelLoadError}
+            loading={modelLoadState === 'loading'}
+            value={carVariant}
+            onChange={selectVehicleModel}
+            category={params.category}
+          />
+        </View>
       ) : null}
 
       {/* Camera mode rail drives the existing map without remounting it. */}
       {hasTrack ? (
-      <View style={[styles.camRail, { top: insets.top + 64 }]}>
-        {CAMERAS.map((cam) => {
-          const active = cam.id === camera;
-          return (
-            <Pressable
-              key={cam.id}
-              accessibilityLabel={cam.label}
-              onPress={() => {
-                haptic();
-                setCamera(cam.id);
-                setCameraCommandId((value) => value + 1);
-                if (__DEV__) console.debug(`[Camera] mode ${cam.id}`);
-              }}
-              style={[styles.camBtn, active && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-              <MaterialCommunityIcons color={active ? colors.onPrimary : G.text} name={cam.icon as never} size={18} />
-              <Text style={[styles.camLabel, { color: active ? colors.onPrimary : G.sub }]}>{cam.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+        <View style={[styles.camRail, { top: insets.top + 64 }]}>
+          {CAMERAS.map((cam) => {
+            const active = cam.id === camera;
+            return (
+              <Pressable
+                key={cam.id}
+                accessibilityLabel={cam.label}
+                onPress={() => {
+                  haptic();
+                  setCamera(cam.id);
+                  setCameraCommandId((value) => value + 1);
+                  if (__DEV__) console.debug(`[Camera] mode ${cam.id}`);
+                }}
+                style={[styles.camBtn, active && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                <MaterialCommunityIcons color={active ? colors.onPrimary : G.text} name={cam.icon as never} size={18} />
+                <Text style={[styles.camLabel, { color: active ? colors.onPrimary : G.sub }]}>{cam.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       ) : null}
 
       {/* Bottom control deck */}
@@ -558,6 +645,172 @@ export default function TripPlaybackScreen() {
           </View>
         </View>
       </View>
+
+      {/* Date Range Filter Modal Overlay */}
+      {showFilterModal ? (
+        <View style={styles.filterModalBackdrop}>
+          <View style={styles.filterModalCard}>
+            <View style={styles.filterHeader}>
+              <Text style={styles.filterTitle}>Filter Trip History</Text>
+              <Pressable
+                accessibilityLabel="Close date filter"
+                hitSlop={10}
+                onPress={() => setShowFilterModal(false)}>
+                <MaterialCommunityIcons color={G.sub} name="close" size={22} />
+              </Pressable>
+            </View>
+
+            {/* From Date & To Date Input Fields */}
+            <View style={styles.rangeFieldRow}>
+              <Pressable
+                accessibilityLabel="Select from date"
+                onPress={() => {
+                  haptic();
+                  setPickerTarget('from');
+                }}
+                style={[styles.rangeField, pickerTarget === 'from' && styles.rangeFieldActive]}>
+                <Text style={styles.rangeFieldLabel}>From Date</Text>
+                <Text style={styles.rangeFieldValue}>{labelDate(draftFromDate)}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Select to date"
+                onPress={() => {
+                  haptic();
+                  setPickerTarget('to');
+                }}
+                style={[styles.rangeField, pickerTarget === 'to' && styles.rangeFieldActive]}>
+                <Text style={styles.rangeFieldLabel}>To Date</Text>
+                <Text style={styles.rangeFieldValue}>{labelDate(draftToDate)}</Text>
+              </Pressable>
+            </View>
+
+            {/* Quick Presets */}
+            <View style={styles.presetsRow}>
+              <Pressable onPress={() => selectPreset('today')} style={styles.presetChip}>
+                <Text style={styles.presetChipText}>Today</Text>
+              </Pressable>
+              <Pressable onPress={() => selectPreset('yesterday')} style={styles.presetChip}>
+                <Text style={styles.presetChipText}>Yesterday</Text>
+              </Pressable>
+              <Pressable onPress={() => selectPreset('week')} style={styles.presetChip}>
+                <Text style={styles.presetChipText}>Last 7 Days</Text>
+              </Pressable>
+              <Pressable onPress={() => selectPreset('month')} style={styles.presetChip}>
+                <Text style={styles.presetChipText}>This Month</Text>
+              </Pressable>
+            </View>
+
+            {/* Calendar Grid Header */}
+            <View style={styles.calendarHeader}>
+              <Pressable
+                hitSlop={8}
+                onPress={() => {
+                  haptic();
+                  if (calMonth === 0) {
+                    setCalMonth(11);
+                    setCalYear((y) => y - 1);
+                  } else {
+                    setCalMonth((m) => m - 1);
+                  }
+                }}>
+                <MaterialCommunityIcons color={G.text} name="chevron-left" size={22} />
+              </Pressable>
+              <Text style={styles.calendarMonthText}>
+                {MONTH_NAMES[calMonth]} {calYear}
+              </Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => {
+                  haptic();
+                  if (calMonth === 11) {
+                    setCalMonth(0);
+                    setCalYear((y) => y + 1);
+                  } else {
+                    setCalMonth((m) => m + 1);
+                  }
+                }}>
+                <MaterialCommunityIcons color={G.text} name="chevron-right" size={22} />
+              </Pressable>
+            </View>
+
+            {/* Weekday Labels */}
+            <View style={styles.weekDaysRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                <Text key={d} style={styles.weekDayText}>
+                  {d}
+                </Text>
+              ))}
+            </View>
+
+            {/* Days Grid */}
+            <View style={styles.daysGrid}>
+              {getCalendarDays(calYear, calMonth).map((cell, idx) => {
+                const isSelected = cell.dateStr === (pickerTarget === 'from' ? draftFromDate : draftToDate);
+                const isFrom = cell.dateStr === draftFromDate;
+                const isTo = cell.dateStr === draftToDate;
+                const inRange = cell.dateStr >= draftFromDate && cell.dateStr <= draftToDate;
+                const isFuture = cell.dateStr > today;
+
+                return (
+                  <Pressable
+                    key={`${cell.dateStr}-${idx}`}
+                    disabled={isFuture}
+                    onPress={() => {
+                      haptic();
+                      if (pickerTarget === 'from') {
+                        setDraftFromDate(cell.dateStr);
+                        if (cell.dateStr > draftToDate) setDraftToDate(cell.dateStr);
+                        setPickerTarget('to');
+                      } else {
+                        setDraftToDate(cell.dateStr);
+                        if (cell.dateStr < draftFromDate) setDraftFromDate(cell.dateStr);
+                      }
+                    }}
+                    style={[
+                      styles.dayCell,
+                      inRange && !isFrom && !isTo && styles.dayCellInRange,
+                      (isFrom || isTo) && styles.dayCellSelected,
+                      isFuture && { opacity: 0.3 },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.dayCellText,
+                        !cell.currentMonth && styles.dayCellTextMuted,
+                        (isFrom || isTo) && styles.dayCellTextSelected,
+                      ]}>
+                      {cell.day}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Validation Alert */}
+            {isInvalidRange ? (
+              <View style={styles.validationErrorBox}>
+                <MaterialCommunityIcons color="#EF4444" name="alert-circle-outline" size={18} />
+                <Text style={styles.validationErrorText}>
+                  From Date cannot be later than To Date.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Action Buttons */}
+            <View style={styles.filterActionsRow}>
+              <Pressable accessibilityRole="button" onPress={resetFilter} style={styles.filterResetBtn}>
+                <Text style={styles.filterResetText}>Reset</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={isInvalidRange}
+                onPress={applyFilter}
+                style={[styles.filterApplyBtn, isInvalidRange && styles.filterApplyBtnDisabled]}>
+                <Text style={styles.filterApplyText}>Apply Filter</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -622,7 +875,7 @@ function coordinateAhead(
   const lng1 = (longitude * Math.PI) / 180;
   const lat2 = Math.asin(
     Math.sin(lat1) * Math.cos(distance) +
-      Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing)
+    Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing)
   );
   const lng2 =
     lng1 +
@@ -871,11 +1124,11 @@ function CinematicTripMap({
     const previousCoordinate = lastCameraCoordinateRef.current;
     const movementKm = previousCoordinate
       ? haversineKm(
-          previousCoordinate.latitude,
-          previousCoordinate.longitude,
-          cur.lat,
-          cur.lng
-        )
+        previousCoordinate.latitude,
+        previousCoordinate.longitude,
+        cur.lat,
+        cur.lng
+      )
       : Number.POSITIVE_INFINITY;
     if (!modeChanged && movementKm < 0.0003) return;
 
@@ -965,17 +1218,17 @@ function CinematicTripMap({
     () =>
       overlayPoint
         ? [
-            {
-              heading: normalizeHeading(cur.heading - mapCameraHeading),
-              id: 'vehicle',
-              isActive: playing,
-              selected: true,
-              speed: cur.speed,
-              variant: carVariant,
-              x: overlayPoint.x,
-              y: overlayPoint.y,
-            },
-          ]
+          {
+            heading: normalizeHeading(cur.heading - mapCameraHeading),
+            id: 'vehicle',
+            isActive: playing,
+            selected: true,
+            speed: cur.speed,
+            variant: carVariant,
+            x: overlayPoint.x,
+            y: overlayPoint.y,
+          },
+        ]
         : [],
     [carVariant, cur.heading, cur.speed, mapCameraHeading, overlayPoint, playing]
   );
@@ -1301,4 +1554,211 @@ const styles = StyleSheet.create({
   speeds: { flexDirection: 'row', gap: 6 },
   speedChip: { borderColor: G.hair, borderRadius: 999, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
   speedChipText: { fontSize: 13, fontWeight: '800' },
+
+  // Date Range Filter & Modal Styles
+  rangeFilterTrigger: {
+    alignItems: 'center',
+    backgroundColor: G.glass,
+    borderColor: G.hair,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    height: 38,
+    paddingHorizontal: 10,
+  },
+  rangeFilterTriggerText: {
+    color: G.text,
+    fontSize: 12,
+    fontWeight: '800',
+    maxWidth: 110,
+  },
+  filterModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(3, 8, 16, 0.78)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    zIndex: 1000,
+  },
+  filterModalCard: {
+    backgroundColor: '#0B131E',
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    borderRadius: 20,
+    borderWidth: 1,
+    elevation: 20,
+    maxWidth: 380,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    width: '100%',
+  },
+  filterHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  filterTitle: {
+    color: G.text,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  rangeFieldRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  rangeField: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    padding: 10,
+  },
+  rangeFieldActive: {
+    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    borderColor: '#22c55e',
+  },
+  rangeFieldLabel: {
+    color: G.sub,
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  rangeFieldValue: {
+    color: G.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 14,
+  },
+  presetChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  presetChipText: {
+    color: G.sub,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  calendarHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  calendarMonthText: {
+    color: G.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  weekDaysRow: {
+    flexDirection: 'row',
+    marginBottom: 6,
+  },
+  weekDayText: {
+    color: G.sub,
+    flex: 1,
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  daysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 14,
+  },
+  dayCell: {
+    alignItems: 'center',
+    borderRadius: 8,
+    height: 36,
+    justifyContent: 'center',
+    marginVertical: 1,
+    width: '14.28%',
+  },
+  dayCellSelected: {
+    backgroundColor: '#22c55e',
+  },
+  dayCellInRange: {
+    backgroundColor: 'rgba(34, 197, 94, 0.22)',
+  },
+  dayCellText: {
+    color: G.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dayCellTextSelected: {
+    color: '#071018',
+    fontWeight: '900',
+  },
+  dayCellTextMuted: {
+    color: 'rgba(255, 255, 255, 0.25)',
+  },
+  validationErrorBox: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.14)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    padding: 10,
+  },
+  validationErrorText: {
+    color: '#EF4444',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  filterActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  filterResetBtn: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    height: 44,
+    justifyContent: 'center',
+  },
+  filterResetText: {
+    color: G.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  filterApplyBtn: {
+    alignItems: 'center',
+    backgroundColor: '#22c55e',
+    borderRadius: 12,
+    flex: 1.5,
+    height: 44,
+    justifyContent: 'center',
+  },
+  filterApplyBtnDisabled: {
+    backgroundColor: 'rgba(34, 197, 94, 0.35)',
+  },
+  filterApplyText: {
+    color: '#071018',
+    fontSize: 13,
+    fontWeight: '900',
+  },
 });

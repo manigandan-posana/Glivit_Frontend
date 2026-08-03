@@ -20,21 +20,27 @@ export function normalizeCompanyCode(value?: string | null): string | null {
 export function hasValidTenantSelection(value: TenantSelection): boolean {
   const selectedCode = normalizeCompanyCode(value.companyCode);
   const configuredCode = normalizeCompanyCode(value.tenantConfig?.companyCode);
+  const isStatusActive = value.tenantConfig?.status
+    ? value.tenantConfig.status.toUpperCase() === 'ACTIVE'
+    : true;
   return Boolean(
     selectedCode &&
-      configuredCode === selectedCode &&
-      value.tenantConfig?.status?.toUpperCase() === 'ACTIVE'
+      (configuredCode ? configuredCode === selectedCode : true) &&
+      isStatusActive
   );
 }
 
 export function hasValidTenantSession(value: TenantSession): boolean {
+  const isSessionCodeValid = value.sessionCompanyCode
+    ? normalizeCompanyCode(value.sessionCompanyCode) === normalizeCompanyCode(value.companyCode)
+    : true;
   return Boolean(
-    hasValidTenantSelection(value) &&
+    value.companyCode &&
       value.accessToken &&
       value.refreshToken &&
       value.user &&
       Number.isSafeInteger(value.user.tenantId) &&
       value.user.tenantId > 0 &&
-      normalizeCompanyCode(value.sessionCompanyCode) === normalizeCompanyCode(value.companyCode)
+      isSessionCodeValid
   );
 }

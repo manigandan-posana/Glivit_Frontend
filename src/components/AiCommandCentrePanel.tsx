@@ -449,10 +449,10 @@ function MetricDetailView({
               metric === 'Active'
                 ? devicesQuery.isFetching
                 : metric === 'Maint. risk'
-                ? maintenanceQuery.isFetching
-                : metric === 'Risky drivers'
-                ? driverQuery.isFetching
-                : eventsQuery.isFetching
+                  ? maintenanceQuery.isFetching
+                  : metric === 'Risky drivers'
+                    ? driverQuery.isFetching
+                    : eventsQuery.isFetching
             }
             onRefresh={() => {
               if (metric === 'Active') devicesQuery.refetch();

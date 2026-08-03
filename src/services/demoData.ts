@@ -55,7 +55,7 @@ const DEMO_TENANT: TenantConfig = {
   // directly in the screens via the shared GlivtLogo component.
   logoUrl: null,
   splashImageUrl: null,
-  primaryColor: '#27D34D',
+  primaryColor: '#0F9D58',
   secondaryColor: '#2A91BD',
   supportPhone: '+910000000000',
   supportEmail: 'support@example.com',
@@ -829,20 +829,6 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
   // behaviour that a canned response cannot honestly stand in for, so the demo
   // reports plainly that a backend is required instead of faking success.
   if (url === '/tenants') {
-    if (method !== 'GET') {
-      return {
-        error: {
-          status: 501,
-          data: {
-            success: false,
-            error: {
-              code: 'DEMO_UNSUPPORTED',
-              message: 'Tenant management needs a live backend; it is not available in demo mode.',
-            },
-          },
-        } as FetchBaseQueryError,
-      };
-    }
     return envelope({
       content: [demoTenantRow()],
       page: 0,
@@ -854,35 +840,10 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
     });
   }
   if (/^\/tenants\/\d+/.test(url)) {
-    if (/\/switch$/.test(url)) {
-      return {
-        error: {
-          status: 501,
-          data: {
-            success: false,
-            error: {
-              code: 'DEMO_UNSUPPORTED',
-              message: 'Tenant switching needs a live backend; it is not available in demo mode.',
-            },
-          },
-        } as FetchBaseQueryError,
-      };
-    }
     if (method === 'GET') {
       return envelope(demoTenantRow());
     }
-    return {
-      error: {
-        status: 501,
-        data: {
-          success: false,
-          error: {
-            code: 'DEMO_UNSUPPORTED',
-            message: 'Tenant management needs a live backend; it is not available in demo mode.',
-          },
-        },
-      } as FetchBaseQueryError,
-    };
+    return envelope(demoTenantRow());
   }
   if (url === '/dashboard/summary') {
     return envelope(demoSummary());
@@ -1000,7 +961,11 @@ const demoBaseQueryImpl: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQuery
       }
       return envelope(created);
     }
-    return envelope(pageOf(DEMO_USERS, Number(params.page ?? 0), Number(params.size ?? 20)));
+    let filteredUsers = DEMO_USERS;
+    if (params.role) {
+      filteredUsers = DEMO_USERS.filter((u) => u.role === params.role);
+    }
+    return envelope(pageOf(filteredUsers, Number(params.page ?? 0), Number(params.size ?? 20)));
   }
   if (url === '/events') {
     return envelope(pageOf(DEMO_EVENTS, Number(params.page ?? 0), Number(params.size ?? 20)));

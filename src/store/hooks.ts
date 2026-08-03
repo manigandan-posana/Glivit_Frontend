@@ -15,7 +15,7 @@ export const useHasPermission = (key: string) =>
   useAppSelector((s) => {
     const user = s.auth.user;
     if (!user) return false;
-    if (user.role === 'SUPER_ADMIN') return true;
+    if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') return true;
     return Boolean(user.permissions?.[key]);
   });
 

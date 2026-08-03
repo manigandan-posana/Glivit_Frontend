@@ -23,11 +23,12 @@ export type DeviceListArgs = {
   search?: string;
   projectId?: number;
   groupId?: number;
+  includeSuspended?: boolean;
   page?: number;
   size?: number;
 };
 
-export type AllDevicesArgs = Pick<DeviceListArgs, 'search' | 'projectId' | 'groupId'>;
+export type AllDevicesArgs = Pick<DeviceListArgs, 'search' | 'projectId' | 'groupId' | 'includeSuspended'>;
 
 export type DeviceUpsertRequest = {
   name: string;
@@ -40,6 +41,7 @@ export type DeviceUpsertRequest = {
   groupId?: number;
   vehicleId?: number;
   managerId?: number;
+  driverId?: number;
   driverName?: string;
   driverPhone?: string;
   remarks?: string;
@@ -51,9 +53,11 @@ export type DeviceUpsertRequest = {
   timezone?: string;
   distanceUnit?: string;
   speedUnit?: string;
+  status?: string;
 };
 
 export const devicesApi = baseApi.injectEndpoints({
+  overrideExisting: true,
   endpoints: (build) => ({
     getAllDevices: build.query<DeviceSummary[], AllDevicesArgs | void>({
       async queryFn(args, _api, _extraOptions, baseQuery) {
@@ -69,15 +73,35 @@ export const devicesApi = baseApi.injectEndpoints({
               ...(filters.search ? { search: filters.search } : {}),
               ...(filters.projectId != null ? { projectId: filters.projectId } : {}),
               ...(filters.groupId != null ? { groupId: filters.groupId } : {}),
+              includeSuspended: filters.includeSuspended ?? true,
               page,
               size: 100,
             },
           });
           if (result.error) return { error: result.error };
 
-          const envelope = result.data as ApiResponse<PageResponse<DeviceSummary>> | undefined;
-          const payload = envelope?.data;
-          if (!payload || !Array.isArray(payload.content)) {
+          const raw = result.data as any;
+          let content: DeviceSummary[] | undefined;
+          let totalPagesVal = 1;
+          let isLast = false;
+
+          if (raw?.data && Array.isArray(raw.data.content)) {
+            content = raw.data.content;
+            totalPagesVal = raw.data.totalPages ?? 1;
+            isLast = Boolean(raw.data.last);
+          } else if (raw && Array.isArray(raw.content)) {
+            content = raw.content;
+            totalPagesVal = raw.totalPages ?? 1;
+            isLast = Boolean(raw.last);
+          } else if (Array.isArray(raw?.data)) {
+            content = raw.data;
+            isLast = true;
+          } else if (Array.isArray(raw)) {
+            content = raw;
+            isLast = true;
+          }
+
+          if (!content) {
             return {
               error: {
                 status: 'PARSING_ERROR',
@@ -87,13 +111,13 @@ export const devicesApi = baseApi.injectEndpoints({
               },
             };
           }
-          payload.content.forEach((device) => {
+          content.forEach((device) => {
             if (device && Number.isSafeInteger(device.id)) devices.set(device.id, device);
           });
-          totalPages = Number.isFinite(payload.totalPages)
-            ? Math.max(1, Math.trunc(payload.totalPages))
+          totalPages = Number.isFinite(totalPagesVal)
+            ? Math.max(1, Math.trunc(totalPagesVal))
             : page + 1;
-          if (payload.last || payload.content.length === 0) break;
+          if (isLast || content.length === 0) break;
           page += 1;
         }
 
@@ -161,7 +185,6 @@ export const devicesApi = baseApi.injectEndpoints({
       providesTags: (_result, _error, { deviceId }) => [{ type: 'Device', id: deviceId }],
     }),
   }),
-  overrideExisting: false,
 });
 
 export const {

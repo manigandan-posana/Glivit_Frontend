@@ -60,8 +60,8 @@ export const lightColors: ThemeColors = {
   onPrimary: '#FFFFFF',
   primaryGreen: '#0F9D58',
   darkGreen: '#0B7C46',
-  accent: '#22C55E',
-  accentSoft: '#E7F7EE',
+  accent: '#0F9D58',
+  accentSoft: 'rgba(15, 157, 88, 0.12)',
 
   pageBackground: '#F3F5F7',
   cardBackground: '#FFFFFF',
@@ -80,7 +80,7 @@ export const lightColors: ThemeColors = {
 
   blue: '#2563EB',
   info: '#2563EB',
-  success: '#16A34A',
+  success: '#0F9D58',
   warning: '#B45309',
   warningOrange: '#F59E0B',
   danger: '#DC2626',
@@ -93,13 +93,13 @@ export const lightColors: ThemeColors = {
 };
 
 export const darkColors: ThemeColors = {
-  primary: '#22C55E',
+  primary: '#0F9D58',
   secondary: '#3B82F6',
-  onPrimary: '#052E16',
-  primaryGreen: '#22C55E',
-  darkGreen: '#16A34A',
-  accent: '#34D399',
-  accentSoft: 'rgba(34,197,94,0.14)',
+  onPrimary: '#FFFFFF',
+  primaryGreen: '#0F9D58',
+  darkGreen: '#0B7C46',
+  accent: '#0F9D58',
+  accentSoft: 'rgba(15, 157, 88, 0.14)',
 
   pageBackground: '#0A0E13',
   cardBackground: '#121924',

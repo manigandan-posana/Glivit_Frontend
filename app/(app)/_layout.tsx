@@ -107,6 +107,7 @@ export default function AppLayout() {
           borderTopRightRadius: radius.lg,
           overflow: 'hidden',
           width: 300,
+          
         },
         headerRight: () => <HeaderReloadButton />,
       }}>

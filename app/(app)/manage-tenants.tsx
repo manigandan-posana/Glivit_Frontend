@@ -140,7 +140,7 @@ export default function ManageTenantsScreen() {
       // tenant simply appears in the list with completely empty data.
       Alert.alert(
         'Tenant created',
-        `${created.name} is ready. Its administrator can sign in with Tenant ID "${created.tenantId}".`
+        `${created.name} is ready with System Tenant ID "${created.tenantId}".`
       );
     },
     [createTenant]

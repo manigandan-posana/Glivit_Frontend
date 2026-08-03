@@ -8,6 +8,7 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -16,6 +17,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +29,7 @@ import MapView, { Circle, Marker } from '@/src/components/maps/NativeMap';
 import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/StateViews';
 import { TextField } from '@/src/components/ui/TextField';
 import { apiErrorMessage } from '@/src/services/apiError';
+import { useGetAllDevicesQuery } from '@/src/services/devicesApi';
 import {
   useCreateGeofenceMutation,
   useDeleteGeofenceMutation,
@@ -35,11 +38,15 @@ import {
 } from '@/src/services/operationsApi';
 import { useGetGeofenceSuggestionsQuery, useApproveGeofenceSuggestionMutation } from '@/src/services/aiApi';
 import { useTheme } from '@/src/theme/ThemeProvider';
-import type { GeofenceDto } from '@/src/types/api';
+import type { DeviceSummary, GeofenceDto } from '@/src/types/api';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
 const schema = z.object({
-  name: z.string().trim().min(2, 'Name is required'),
+  name: z
+    .string()
+    .trim()
+    .min(2, 'Name is required')
+    .max(100, 'Name must be 100 characters or fewer'),
   latitude: z
     .string()
     .trim()
@@ -55,6 +62,7 @@ const schema = z.object({
     .trim()
     .regex(/^\d+(\.\d+)?$/, 'Invalid radius')
     .refine((value) => Number(value) > 0 && Number(value) <= 100, 'Radius must be between 0.001 and 100 km'),
+  assignedDeviceIds: z.array(z.number()),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -64,6 +72,7 @@ const DEFAULT_FORM: FormValues = {
   latitude: '12.9718',
   longitude: '77.5946',
   radiusMeters: '0.25',
+  assignedDeviceIds: [],
 };
 
 const RADIUS_PRESETS = [0.1, 0.25, 0.5, 1, 5] as const;
@@ -107,6 +116,9 @@ export default function GeofencesScreen() {
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const { data, isLoading, isFetching, isError, error, refetch } = useGetGeofencesQuery({ size: 50 });
+  const { data: devicesData } = useGetAllDevicesQuery();
+  const allDevices = React.useMemo(() => (Array.isArray(devicesData) ? devicesData : []), [devicesData]);
+  const devicesMap = React.useMemo(() => new Map(allDevices.map((d) => [d.id, d])), [allDevices]);
   const {
     data: aiSuggestions,
     isLoading: aiLoading,
@@ -193,6 +205,7 @@ export default function GeofencesScreen() {
         radiusMeters: Number.isFinite(geofence.radiusMeters)
           ? String(Number((geofence.radiusMeters as number) / 1000))
           : DEFAULT_FORM.radiusMeters,
+        assignedDeviceIds: Array.isArray(geofence.assignedDeviceIds) ? geofence.assignedDeviceIds : [],
       });
       setSearchText('');
       setSaveSuccess(false);
@@ -320,82 +333,154 @@ export default function GeofencesScreen() {
   const handleCurrentLocation = React.useCallback(async () => {
     setLocationLoading(true);
     clearErrors(['latitude', 'longitude']);
+
     try {
-      // 1. Check if location services (GPS) are enabled
-      const enabled = await Location.hasServicesEnabledAsync();
-      if (!enabled) {
-        setError('latitude', {
-          message: 'Location services (GPS) are disabled. Please turn on location services in your device settings.',
-        });
-        return;
-      }
-
-      // 2. Request permissions
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setError('latitude', {
-          message: 'Location permission was denied. Please grant location access.',
-        });
-        return;
-      }
-
-      // 3. Get current position with timeout wrapper
-      const getPos = () =>
-        new Promise<Coordinate>((resolve, reject) => {
-          let finished = false;
-          const timer = setTimeout(() => {
-            if (!finished) {
-              finished = true;
-              reject(new Error('Location request timed out. Please check your location settings and try again.'));
-            }
-          }, 8000);
-
-          Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          })
-            .then((pos) => {
-              if (!finished) {
-                finished = true;
-                clearTimeout(timer);
-                resolve({
-                  latitude: pos.coords.latitude,
-                  longitude: pos.coords.longitude,
-                });
-              }
-            })
-            .catch((err) => {
-              if (!finished) {
-                finished = true;
-                clearTimeout(timer);
-                reject(err);
-              }
-            });
-        });
-
       let coords: Coordinate;
-      try {
-        coords = await getPos();
-      } catch (err: any) {
-        // Fallback to last known position if active retrieval fails
-        const lastKnown = await Location.getLastKnownPositionAsync();
-        if (lastKnown) {
-          coords = {
-            latitude: lastKnown.coords.latitude,
-            longitude: lastKnown.coords.longitude,
-          };
-        } else {
-          throw err;
+      if (Platform.OS === 'web') {
+        const geo = getGeolocation();
+        if (!geo) {
+          throw new Error('Geolocation is not supported by your browser.');
+        }
+        coords = await new Promise<Coordinate>((resolve, reject) => {
+          geo.getCurrentPosition(
+            (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+            (err) => reject(err),
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+          );
+        });
+      } else {
+        // 1. Check if location services (GPS) are enabled on the device
+        let servicesEnabled = false;
+        try {
+          servicesEnabled = await Location.hasServicesEnabledAsync();
+        } catch {
+          servicesEnabled = true;
+        }
+
+        if (!servicesEnabled) {
+          if (Platform.OS === 'android') {
+            try {
+              await Location.enableNetworkProviderAsync();
+              servicesEnabled = await Location.hasServicesEnabledAsync();
+            } catch {
+              // User cancelled or provider request failed
+            }
+          }
+          if (!servicesEnabled) {
+            Alert.alert(
+              'GPS Disabled',
+              'Location services (GPS) are turned off. Please turn on location services in device settings to use your current location.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings().catch(() => undefined) },
+              ]
+            );
+            setError('latitude', {
+              message: 'GPS location services are disabled. Please turn on location services in device settings.',
+            });
+            return;
+          }
+        }
+
+        // 2. Check and request location permissions
+        const permissionResult = await Location.requestForegroundPermissionsAsync();
+        if (permissionResult.status !== 'granted') {
+          if (permissionResult.canAskAgain === false) {
+            Alert.alert(
+              'Location Permission Required',
+              'Location permission is permanently denied. Please grant location access in your device settings.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings().catch(() => undefined) },
+              ]
+            );
+          } else {
+            Alert.alert(
+              'Permission Denied',
+              'Location access was denied. Please allow location access to fill current GPS coordinates.'
+            );
+          }
+          setError('latitude', {
+            message: 'Location permission was denied. Please grant location access.',
+          });
+          return;
+        }
+
+        // 3. Obtain high-accuracy current location with a fallback timeout and last known position fallback
+        const getPos = () =>
+          new Promise<Coordinate>((resolve, reject) => {
+            let finished = false;
+            const timer = setTimeout(() => {
+              if (!finished) {
+                finished = true;
+                reject(new Error('Location request timed out. Please check your GPS signal and try again.'));
+              }
+            }, 10000);
+
+            Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.High,
+            })
+              .then((pos) => {
+                if (!finished) {
+                  finished = true;
+                  clearTimeout(timer);
+                  resolve({
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude,
+                  });
+                }
+              })
+              .catch((err) => {
+                if (!finished) {
+                  finished = true;
+                  clearTimeout(timer);
+                  reject(err);
+                }
+              });
+          });
+
+        try {
+          coords = await getPos();
+        } catch {
+          // Fallback to last known position if fresh fix times out or fails
+          const lastKnown = await Location.getLastKnownPositionAsync({});
+          if (lastKnown?.coords) {
+            coords = {
+              latitude: lastKnown.coords.latitude,
+              longitude: lastKnown.coords.longitude,
+            };
+          } else {
+            throw new Error('Could not retrieve current GPS position. Please ensure GPS is active and try again.');
+          }
         }
       }
 
       setPickedCoordinate(coords, true);
-      setSearchText('Current Location');
+
+      // Perform reverse geocoding to automatically display place name/address
+      let placeName = 'Current Location';
+      try {
+        const reverseRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}`,
+          { headers: { 'User-Agent': 'GlivtTrackerApp/1.0' } }
+        );
+        if (reverseRes.ok) {
+          const reverseData = await reverseRes.json();
+          if (reverseData?.display_name) {
+            placeName = reverseData.display_name.split(',').slice(0, 3).join(',');
+          }
+        }
+      } catch {
+        // Fallback to default
+      }
+      setSearchText(placeName);
     } catch (err: unknown) {
       const msg =
         err instanceof Error
           ? err.message
           : 'Could not retrieve current GPS position. Please check your location settings.';
       setError('latitude', { message: msg });
+      Alert.alert('GPS Location Error', msg);
     } finally {
       setLocationLoading(false);
     }
@@ -438,16 +523,12 @@ export default function GeofencesScreen() {
       type: 'CIRCLE' as const,
       coordinates: [[Number(values.longitude), Number(values.latitude)]],
       radiusMeters: Number(values.radiusMeters) * 1000,
-      ...(existing
-        ? {
-            description: existing.description ?? undefined,
-            assignedDeviceIds: existing.assignedDeviceIds,
-            assignedGroupIds: existing.assignedGroupIds,
-            enterAlert: existing.enterAlert,
-            exitAlert: existing.exitAlert,
-            active: existing.active,
-          }
-        : { enterAlert: true, exitAlert: true, active: true }),
+      assignedDeviceIds: values.assignedDeviceIds ?? [],
+      assignedGroupIds: existing?.assignedGroupIds ?? [],
+      enterAlert: existing?.enterAlert ?? true,
+      exitAlert: existing?.exitAlert ?? true,
+      active: existing?.active ?? true,
+      ...(existing?.description ? { description: existing.description } : {}),
     };
 
     try {
@@ -603,6 +684,7 @@ export default function GeofencesScreen() {
           <GeofenceRow
             busy={deletingId === item.id}
             colors={c}
+            devicesMap={devicesMap}
             geofence={item}
             onDelete={() => confirmDelete(item)}
             onEdit={() => openEdit(item)}
@@ -848,6 +930,19 @@ export default function GeofencesScreen() {
                   );
                 })}
               </View>
+              <Controller
+                control={control}
+                name="assignedDeviceIds"
+                render={({ field: { onChange, value } }) => (
+                  <VehicleMultiSelect
+                    colors={c}
+                    devices={allDevices}
+                    onChange={onChange}
+                    selectedIds={Array.isArray(value) ? value : []}
+                    styles={styles}
+                  />
+                )}
+              />
               {saveSuccess ? (
                 <View style={styles.successState}>
                   <MaterialCommunityIcons color={c.primary} name="check-circle-outline" size={18} />
@@ -875,9 +970,227 @@ export default function GeofencesScreen() {
   );
 }
 
+function getVehicleIcon(category?: string | null): React.ComponentProps<typeof MaterialCommunityIcons>['name'] {
+  const cat = (category ?? '').toLowerCase();
+  if (cat.includes('truck') || cat.includes('heavy')) return 'truck';
+  if (cat.includes('bus')) return 'bus';
+  if (cat.includes('van')) return 'van-utility';
+  if (cat.includes('bike') || cat.includes('motorcycle')) return 'motorbike';
+  return 'car';
+}
+
+function VehicleMultiSelect({
+  colors: c,
+  devices,
+  onChange,
+  selectedIds,
+  styles,
+}: {
+  colors: ThemeColors;
+  devices: DeviceSummary[];
+  onChange: (ids: number[]) => void;
+  selectedIds: number[];
+  styles: ReturnType<typeof makeStyles>;
+}) {
+  const [filterText, setFilterText] = React.useState('');
+  const [expanded, setExpanded] = React.useState(false);
+
+  const selectedSet = React.useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const filteredDevices = React.useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    if (!q) return devices;
+    return devices.filter(
+      (d) =>
+        d.name?.toLowerCase().includes(q) ||
+        d.imei?.toLowerCase().includes(q) ||
+        d.category?.toLowerCase().includes(q)
+    );
+  }, [devices, filterText]);
+
+  const selectedDevices = React.useMemo(
+    () => devices.filter((d) => selectedSet.has(d.id)),
+    [devices, selectedSet]
+  );
+
+  const toggleSelect = (id: number) => {
+    const next = new Set(selectedSet);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    onChange(Array.from(next));
+  };
+
+  const selectAll = () => {
+    onChange(devices.map((d) => d.id));
+  };
+
+  const deselectAll = () => {
+    onChange([]);
+  };
+
+  return (
+    <View style={styles.vehicleSelectContainer}>
+      <View style={styles.vehicleSelectHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <MaterialCommunityIcons name="car-multiple" size={18} color={c.primary} />
+          <Text style={styles.vehicleSelectLabel}>Assign Vehicle(s)</Text>
+        </View>
+        <View style={styles.vehicleCountBadge}>
+          <Text style={styles.vehicleCountText}>
+            {selectedIds.length} of {devices.length} selected
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.vehicleActionRow}>
+        <Pressable
+          accessibilityLabel="Toggle vehicle list"
+          accessibilityRole="button"
+          onPress={() => setExpanded((v) => !v)}
+          style={[styles.vehicleActionPill, expanded && styles.vehicleActionPillActive]}>
+          <MaterialCommunityIcons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color={expanded ? c.primary : c.textSecondary}
+          />
+          <Text style={[styles.vehicleActionText, expanded && { color: c.primary }]}>
+            {expanded ? 'Hide Vehicle List' : 'Select Vehicles'}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityLabel="Select all vehicles"
+          accessibilityRole="button"
+          onPress={selectAll}
+          style={styles.vehicleActionPill}>
+          <MaterialCommunityIcons name="check-all" size={14} color={c.primary} />
+          <Text style={[styles.vehicleActionText, { color: c.primary }]}>Select All</Text>
+        </Pressable>
+
+        {selectedIds.length > 0 ? (
+          <Pressable
+            accessibilityLabel="Clear selected vehicles"
+            accessibilityRole="button"
+            onPress={deselectAll}
+            style={styles.vehicleActionPill}>
+            <MaterialCommunityIcons name="close-circle-outline" size={14} color={c.danger} />
+            <Text style={[styles.vehicleActionText, { color: c.danger }]}>Clear All</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {selectedDevices.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.selectedChipsContainer}>
+          {selectedDevices.map((d) => (
+            <View key={d.id} style={styles.selectedVehicleChip}>
+              <MaterialCommunityIcons
+                name={getVehicleIcon(d.category)}
+                size={13}
+                color={c.primary}
+              />
+              <Text numberOfLines={1} style={styles.selectedVehicleChipText}>
+                {d.name}
+              </Text>
+              <Pressable
+                accessibilityLabel={`Remove ${d.name}`}
+                accessibilityRole="button"
+                hitSlop={6}
+                onPress={() => toggleSelect(d.id)}>
+                <MaterialCommunityIcons name="close-circle" size={14} color={c.textMuted} />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={styles.noVehiclesSelectedHint}>
+          <Text style={styles.noVehiclesSelectedText}>
+            No vehicles assigned yet. Tap "Select Vehicles" to choose.
+          </Text>
+        </View>
+      )}
+
+      {expanded ? (
+        <View style={styles.vehicleDropdownPanel}>
+          <View style={styles.vehicleSearchBox}>
+            <MaterialCommunityIcons name="magnify" size={16} color={c.textMuted} />
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setFilterText}
+              placeholder="Search vehicle name or IMEI…"
+              placeholderTextColor={c.textMuted}
+              style={styles.vehicleSearchInput}
+              value={filterText}
+            />
+            {filterText ? (
+              <Pressable onPress={() => setFilterText('')}>
+                <MaterialCommunityIcons name="close-circle" size={16} color={c.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <ScrollView style={styles.vehicleListScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+            {filteredDevices.length === 0 ? (
+              <Text style={styles.emptyVehicleSearchText}>No vehicles match "{filterText}"</Text>
+            ) : (
+              filteredDevices.map((d) => {
+                const selected = selectedSet.has(d.id);
+                return (
+                  <Pressable
+                    key={d.id}
+                    onPress={() => toggleSelect(d.id)}
+                    style={({ pressed }) => [
+                      styles.vehicleListItem,
+                      selected && styles.vehicleListItemSelected,
+                      pressed && { opacity: 0.8 },
+                    ]}>
+                    <MaterialCommunityIcons
+                      name={selected ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
+                      size={20}
+                      color={selected ? c.primary : c.textMuted}
+                    />
+                    <MaterialCommunityIcons
+                      name={getVehicleIcon(d.category)}
+                      size={17}
+                      color={selected ? c.primary : c.textSecondary}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.vehicleItemName, selected && { color: c.primary, fontWeight: '800' }]}>
+                        {d.name}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.vehicleItemMeta}>
+                        IMEI {d.imei} · {d.category || 'Vehicle'}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.vehicleStateDot,
+                        { backgroundColor: d.state === 'MOVING' || d.state === 'RUNNING' ? c.success : c.textMuted },
+                      ]}
+                    />
+                  </Pressable>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function GeofenceRow({
   busy,
   colors: c,
+  devicesMap,
   geofence,
   onDelete,
   onEdit,
@@ -885,6 +1198,7 @@ function GeofenceRow({
 }: {
   busy: boolean;
   colors: ThemeColors;
+  devicesMap: Map<number, DeviceSummary>;
   geofence: GeofenceDto;
   onDelete: () => void;
   onEdit: () => void;
@@ -894,9 +1208,15 @@ function GeofenceRow({
   const deviceCount = Array.isArray(geofence.assignedDeviceIds)
     ? geofence.assignedDeviceIds.length
     : 0;
-  const groupCount = Array.isArray(geofence.assignedGroupIds)
-    ? geofence.assignedGroupIds.length
-    : 0;
+
+  const assignedVehicles = React.useMemo(() => {
+    if (!Array.isArray(geofence.assignedDeviceIds) || geofence.assignedDeviceIds.length === 0) {
+      return [];
+    }
+    return geofence.assignedDeviceIds
+      .map((id) => devicesMap.get(id))
+      .filter((d): d is DeviceSummary => d != null);
+  }, [geofence.assignedDeviceIds, devicesMap]);
 
   return (
     <View style={styles.geofenceCard}>
@@ -930,10 +1250,31 @@ function GeofenceRow({
           {geofence.type} ·{' '}
           {geofence.radiusMeters ? `${Number((geofence.radiusMeters / 1000).toFixed(3))} km radius` : 'custom shape'}
         </Text>
-        <Text numberOfLines={1} style={styles.meta}>
-          {deviceCount === 0 ? 'No vehicles assigned' : `${deviceCount} vehicle${deviceCount === 1 ? '' : 's'}`}
-          {groupCount > 0 ? ` · ${groupCount} group${groupCount === 1 ? '' : 's'}` : ''}
-        </Text>
+
+        <View style={styles.assignedVehiclesRow}>
+          {assignedVehicles.length === 0 ? (
+            <Text numberOfLines={1} style={styles.noAssignedText}>
+              <MaterialCommunityIcons name="car-off" size={12} /> No vehicles assigned
+            </Text>
+          ) : (
+            <View style={styles.assignedBadgesWrap}>
+              <MaterialCommunityIcons name="car-multiple" size={13} color={c.primary} style={{ marginTop: 2 }} />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 5 }}>
+                {assignedVehicles.slice(0, 5).map((dev) => (
+                  <View key={dev.id} style={styles.assignedBadge}>
+                    <MaterialCommunityIcons name={getVehicleIcon(dev.category)} size={11} color={c.primary} />
+                    <Text numberOfLines={1} style={styles.assignedBadgeText}>{dev.name}</Text>
+                  </View>
+                ))}
+                {deviceCount > 5 ? (
+                  <View style={styles.assignedBadgeMore}>
+                    <Text style={styles.assignedBadgeMoreText}>+{deviceCount - 5} more</Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+            </View>
+          )}
+        </View>
       </View>
       <View style={styles.rowActions}>
         <Pressable
@@ -1221,4 +1562,202 @@ const makeStyles = (c: ThemeColors) =>
       width: 44,
     },
     editorContent: { gap: spacing.md, paddingBottom: spacing.md },
+    vehicleSelectContainer: {
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      gap: spacing.xs,
+      padding: spacing.md,
+    },
+    vehicleSelectHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    vehicleSelectLabel: {
+      color: c.textPrimary,
+      fontSize: typography.label,
+      fontWeight: '800',
+    },
+    vehicleCountBadge: {
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    vehicleCountText: {
+      color: c.primary,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    vehicleActionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+      marginTop: 2,
+    },
+    vehicleActionPill: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    vehicleActionPillActive: {
+      backgroundColor: c.accentSoft,
+      borderColor: c.primary,
+    },
+    vehicleActionText: {
+      color: c.textSecondary,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    selectedChipsContainer: {
+      flexDirection: 'row',
+      gap: 6,
+      paddingVertical: 4,
+    },
+    selectedVehicleChip: {
+      alignItems: 'center',
+      backgroundColor: c.surface,
+      borderColor: c.borderStrong,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    selectedVehicleChipText: {
+      color: c.textPrimary,
+      fontSize: 12,
+      fontWeight: '700',
+      maxWidth: 120,
+    },
+    noVehiclesSelectedHint: {
+      paddingVertical: 4,
+    },
+    noVehiclesSelectedText: {
+      color: c.textMuted,
+      fontSize: typography.caption,
+      fontStyle: 'italic',
+    },
+    vehicleDropdownPanel: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      gap: spacing.xs,
+      marginTop: 6,
+      maxHeight: 220,
+      padding: spacing.sm,
+    },
+    vehicleSearchBox: {
+      alignItems: 'center',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    vehicleSearchInput: {
+      color: c.textPrimary,
+      flex: 1,
+      fontSize: typography.caption,
+      height: 32,
+      padding: 0,
+    },
+    vehicleListScroll: {
+      maxHeight: 160,
+    },
+    emptyVehicleSearchText: {
+      color: c.textMuted,
+      fontSize: typography.caption,
+      padding: spacing.sm,
+      textAlign: 'center',
+    },
+    vehicleListItem: {
+      alignItems: 'center',
+      borderRadius: radius.sm,
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 7,
+    },
+    vehicleListItemSelected: {
+      backgroundColor: c.accentSoft,
+    },
+    vehicleItemName: {
+      color: c.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    vehicleItemMeta: {
+      color: c.textMuted,
+      fontSize: 10,
+    },
+    vehicleStateDot: {
+      borderRadius: 4,
+      height: 7,
+      width: 7,
+    },
+    assignedVehiclesRow: {
+      gap: 4,
+      marginTop: 4,
+    },
+    assignedVehiclesLabel: {
+      color: c.textSecondary,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    assignedBadgesWrap: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 2,
+    },
+    assignedBadge: {
+      alignItems: 'center',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    assignedBadgeText: {
+      color: c.textPrimary,
+      fontSize: 11,
+      fontWeight: '700',
+      maxWidth: 110,
+    },
+    assignedBadgeMore: {
+      alignItems: 'center',
+      backgroundColor: c.accentSoft,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    assignedBadgeMoreText: {
+      color: c.primary,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    noAssignedText: {
+      color: c.textMuted,
+      fontSize: 11,
+      fontStyle: 'italic',
+      marginTop: 2,
+    },
   });

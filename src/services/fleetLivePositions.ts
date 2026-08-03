@@ -42,7 +42,7 @@ export type FleetLive = {
   vehicleCount: number;
 };
 
-const MOVING_STATES = new Set(['RUNNING', 'IDLE']);
+const MOVING_STATES = new Set(['RUNNING', 'MOVING']);
 const DEMO_STEP_MS = 1200;
 
 function makeTarget(v: DeviceSummary, previous?: FleetTarget): FleetTarget | null {

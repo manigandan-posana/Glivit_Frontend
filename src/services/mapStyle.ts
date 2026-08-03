@@ -3,7 +3,7 @@ import type { MapStyleElement } from 'react-native-maps';
 import { env } from '@/src/config/env';
 
 export type MapStyleSpec = string | Record<string, unknown>;
-export type MapStyleVariant = 'street' | 'bright' | 'dark';
+export type MapStyleVariant = 'street' | 'bright' | 'dark' | 'satellite';
 export type NativeMapProvider = 'google-apple';
 export type WebMapProvider = 'geoapify' | 'openfreemap';
 
@@ -77,12 +77,14 @@ const OPENFREEMAP_STYLES: Record<MapStyleVariant, string> = {
   street: 'https://tiles.openfreemap.org/styles/liberty',
   bright: 'https://tiles.openfreemap.org/styles/bright',
   dark: 'https://tiles.openfreemap.org/styles/dark',
+  satellite: 'https://tiles.openfreemap.org/styles/bright',
 };
 
 const GEOAPIFY_STYLES: Record<MapStyleVariant, string> = {
   street: 'osm-bright',
   bright: 'osm-bright',
   dark: 'dark-matter',
+  satellite: 'osm-bright',
 };
 
 function isPlaceholderKey(key: string): boolean {

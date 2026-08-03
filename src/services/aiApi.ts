@@ -187,6 +187,7 @@ export interface AiEventQuery {
 }
 
 export const aiApi = baseApi.injectEndpoints({
+  overrideExisting: true,
   endpoints: (builder) => ({
     getAiDashboardSummary: builder.query<AiDashboardSummaryDto, void>({
       query: () => '/ai/dashboard',
@@ -260,7 +261,6 @@ export const aiApi = baseApi.injectEndpoints({
       providesTags: ['Device'],
     }),
   }),
-  overrideExisting: false,
 });
 
 export const {

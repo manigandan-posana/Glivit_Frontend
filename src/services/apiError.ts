@@ -8,6 +8,9 @@ export function apiErrorMessage(err: unknown, fallback = 'Something went wrong')
   if (e.status === 'FETCH_ERROR' || e.status === 'TIMEOUT_ERROR') {
     return 'Cannot reach the server. Check the backend URL and your connection.';
   }
+  if (e.status === 'CUSTOM_ERROR') {
+    return e.data?.error?.message ?? fallback;
+  }
   // A 5xx used to be reported as a bare "Server error", which discarded the
   // envelope the backend actually sent — including the correlation id needed to
   // find the failure in the server log. Prefer the real message when there is

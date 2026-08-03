@@ -27,8 +27,6 @@ import type {
 
 const STATUSES: TenantStatus[] = ['ACTIVE', 'DISABLED', 'MAINTENANCE'];
 
-/** Mirrors the backend regexes so a value accepted here is accepted there too. */
-const TENANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const PHONE_PATTERN = /^\+?[0-9][0-9 ()-]{7,19}$/;
 
@@ -39,8 +37,6 @@ type Draft = {
   adminName: string;
   adminEmail: string;
   adminPhone: string;
-  password: string;
-  confirmPassword: string;
   status: TenantStatus;
 };
 
@@ -53,8 +49,6 @@ const EMPTY: Draft = {
   adminName: '',
   adminEmail: '',
   adminPhone: '',
-  password: '',
-  confirmPassword: '',
   status: 'ACTIVE',
 };
 
@@ -67,8 +61,6 @@ function draftFrom(tenant: TenantSummary | null): Draft {
     adminName: tenant.adminName ?? '',
     adminEmail: tenant.adminEmail ?? '',
     adminPhone: tenant.adminPhone ?? '',
-    password: '',
-    confirmPassword: '',
     status: (STATUSES.includes(tenant.status as TenantStatus)
       ? tenant.status
       : 'ACTIVE') as TenantStatus,
@@ -99,18 +91,6 @@ export function validateTenantDraft(
     errors.name = 'Another tenant already uses this name';
   }
 
-  if (mode === 'create') {
-    const tenantId = draft.tenantId.trim();
-    if (!tenantId) errors.tenantId = 'Tenant ID is required';
-    else if (tenantId.length < 3 || tenantId.length > 64) {
-      errors.tenantId = 'Tenant ID must be between 3 and 64 characters';
-    } else if (!TENANT_ID_PATTERN.test(tenantId)) {
-      errors.tenantId = 'Use letters, numbers, dot, dash or underscore only';
-    } else if (others.some((t) => t.tenantId.toLowerCase() === tenantId.toLowerCase())) {
-      errors.tenantId = 'This Tenant ID is already taken';
-    }
-  }
-
   const companyName = draft.companyName.trim();
   if (!companyName) errors.companyName = 'Company name is required';
   else if (companyName.length > 160) {
@@ -134,18 +114,6 @@ export function validateTenantDraft(
   if (!adminPhone) errors.adminPhone = 'Phone number is required';
   else if (!PHONE_PATTERN.test(adminPhone)) {
     errors.adminPhone = 'Enter a valid phone number (8-20 digits, optional +)';
-  }
-
-  if (mode === 'create') {
-    const password = draft.password;
-    if (!password) errors.password = 'Password is required';
-    else if (password.length < 8) errors.password = 'Use at least 8 characters';
-    else if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
-      errors.password = 'Include an uppercase letter, a lowercase letter and a number';
-    }
-
-    if (!draft.confirmPassword) errors.confirmPassword = 'Confirm the password';
-    else if (draft.confirmPassword !== password) errors.confirmPassword = 'Passwords do not match';
   }
 
   if (!STATUSES.includes(draft.status)) errors.status = 'Choose a tenant status';
@@ -175,8 +143,6 @@ function serverFieldErrors(error: unknown): { fields: FieldErrors; banner: strin
   if (/tenant id/i.test(message)) fields.tenantId = message;
   else if (/tenant name/i.test(message)) fields.name = message;
   else if (/admin email/i.test(message)) fields.adminEmail = message;
-  else if (/passwords do not match/i.test(message)) fields.confirmPassword = message;
-  else if (/password/i.test(message)) fields.password = message;
 
   const banner = Object.keys(fields).length > 0 ? null : apiErrorMessage(error);
   return { fields, banner };
@@ -240,13 +206,10 @@ export function TenantFormModal({
       if (mode === 'create') {
         await onCreate({
           name: draft.name.trim(),
-          tenantId: draft.tenantId.trim(),
           companyName: draft.companyName.trim(),
           adminName: draft.adminName.trim(),
           adminEmail: draft.adminEmail.trim(),
           adminPhone: draft.adminPhone.trim(),
-          password: draft.password,
-          confirmPassword: draft.confirmPassword,
           status: draft.status,
         });
       } else if (tenant) {
@@ -306,27 +269,18 @@ export function TenantFormModal({
             placeholder="Northern Fleet Operations"
             value={draft.name}
           />
-          {mode === 'create' ? (
-            <TextField
-              autoCapitalize="characters"
-              error={liveErrors.tenantId}
-              label="Tenant ID"
-              onChangeText={(v) => set('tenantId', v.replace(/\s/g, ''))}
-              placeholder="NORTHFLEET"
-              value={draft.tenantId}
-            />
-          ) : (
+          {mode === 'edit' ? (
             <View>
-              <Text style={styles.readOnlyLabel}>Tenant ID</Text>
+              <Text style={styles.readOnlyLabel}>Tenant ID (System Identifier)</Text>
               <View style={styles.readOnlyBox}>
                 <Text style={styles.readOnlyValue}>{draft.tenantId}</Text>
                 <MaterialCommunityIcons color={c.textMuted} name="lock-outline" size={16} />
               </View>
               <Text style={styles.readOnlyHint}>
-                The Tenant ID cannot change — every record in this tenant is bound to it.
+                Auto-generated internal system identifier.
               </Text>
             </View>
-          )}
+          ) : null}
           <TextField
             error={liveErrors.companyName}
             label="Company Name"
@@ -360,32 +314,6 @@ export function TenantFormModal({
             placeholder="+91 98765 43210"
             value={draft.adminPhone}
           />
-
-          {mode === 'create' ? (
-            <>
-              <Text style={styles.sectionLabel}>Administrator password</Text>
-              <Text style={styles.sectionHint}>
-                The admin signs in with the Tenant ID as the company code and the admin email as
-                the username.
-              </Text>
-              <TextField
-                autoCapitalize="none"
-                error={liveErrors.password}
-                label="Password"
-                onChangeText={(v) => set('password', v)}
-                secure
-                value={draft.password}
-              />
-              <TextField
-                autoCapitalize="none"
-                error={liveErrors.confirmPassword}
-                label="Confirm Password"
-                onChangeText={(v) => set('confirmPassword', v)}
-                secure
-                value={draft.confirmPassword}
-              />
-            </>
-          ) : null}
 
           <Text style={styles.sectionLabel}>Tenant Status</Text>
           <View style={styles.statusRow}>

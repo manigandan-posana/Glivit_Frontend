@@ -19,6 +19,7 @@ type ButtonProps = {
   disabled?: boolean;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   color?: string;
+  textColor?: string;
   icon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   style?: ViewStyle;
 };
@@ -34,6 +35,7 @@ export function Button({
   disabled = false,
   variant = 'primary',
   color,
+  textColor: customTextColor,
   icon,
   style,
 }: ButtonProps) {
@@ -50,11 +52,12 @@ export function Button({
           ? colors.surfaceAlt
           : 'transparent';
   const textColor =
-    variant === 'primary'
+    customTextColor ||
+    (variant === 'primary'
       ? colors.onPrimary
       : variant === 'danger'
         ? colors.white
-        : colors.textPrimary;
+        : colors.textPrimary);
   const bordered = variant === 'secondary' || variant === 'ghost';
 
   return (

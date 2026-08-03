@@ -2,6 +2,7 @@ import { baseApi, unwrap } from '@/src/services/baseApi';
 import type { ApiResponse, DashboardSummary } from '@/src/types/api';
 
 export const dashboardApi = baseApi.injectEndpoints({
+  overrideExisting: true,
   endpoints: (build) => ({
     getDashboardSummary: build.query<DashboardSummary, void>({
       query: () => ({ url: '/dashboard/summary' }),
@@ -9,7 +10,6 @@ export const dashboardApi = baseApi.injectEndpoints({
       providesTags: ['Dashboard'],
     }),
   }),
-  overrideExisting: false,
 });
 
 export const { useGetDashboardSummaryQuery } = dashboardApi;

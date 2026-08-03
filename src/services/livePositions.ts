@@ -329,7 +329,7 @@ function applyLiveEvent(
   };
 }
 
-export function useLivePositions(deviceId?: number, enabled = true): LivePositionsState {
+export function useLivePositions(deviceId?: number, initialState?: string, enabled = true): LivePositionsState {
   const token = useAppSelector((s) => s.auth.accessToken);
   // Device ids are tenant-owned, so a tenant switch invalidates the whole buffer:
   // the accumulated live route, the last fix and the connection all belong to the
@@ -351,7 +351,7 @@ export function useLivePositions(deviceId?: number, enabled = true): LivePositio
     // the LIVE/follow features are testable without a backend. Forced off in
     // production because `env.demoMode` is gated behind `__DEV__`.
     if (env.demoMode) {
-      return startDemoSimulator(deviceId, setState);
+      return startDemoSimulator(deviceId, initialState, setState);
     }
 
     if (!env.backendBaseUrl) {
@@ -388,7 +388,7 @@ export function useLivePositions(deviceId?: number, enabled = true): LivePositio
     // Closing on tenantEpoch change is what unsubscribes from the previous tenant's
     // GPS stream; the effect then reopens it with the new tenant's token.
     return () => connection.close();
-  }, [enabled, deviceId, token, tenantEpoch]);
+  }, [enabled, deviceId, token, tenantEpoch, initialState]);
 
   return state;
 }
@@ -433,8 +433,11 @@ function demoBearing(lat1: number, lng1: number, lat2: number, lng2: number): nu
  */
 function startDemoSimulator(
   deviceId: number,
+  initialState: string | undefined,
   setState: Dispatch<SetStateAction<LivePositionsState>>
 ): () => void {
+  const isMoving = initialState === 'RUNNING' || initialState === 'MOVING' || !initialState;
+
   const emit = () => {
     const defaultLng = DEMO_LIVE_PATH[DEMO_LIVE_PATH.length - 1][0];
     const defaultLat = DEMO_LIVE_PATH[DEMO_LIVE_PATH.length - 1][1];
@@ -444,8 +447,8 @@ function startDemoSimulator(
       defaultLat,
       defaultLng,
       0,
-      'RUNNING',
-      true
+      initialState || 'RUNNING',
+      isMoving
     );
 
     const now = new Date().toISOString();
@@ -454,9 +457,9 @@ function startDemoSimulator(
       vehicleId: deviceId,
       latitude: sim.latitude,
       longitude: sim.longitude,
-      speed: Math.round(sim.speed * 10) / 10,
+      speed: isMoving ? Math.round(sim.speed * 10) / 10 : 0,
       course: sim.heading,
-      ignition: true,
+      ignition: isMoving,
       gpsValid: true,
       state: sim.state,
       address: 'Demo live location, Bengaluru',
@@ -468,6 +471,9 @@ function startDemoSimulator(
   };
 
   emit();
+  if (!isMoving) {
+    return () => {};
+  }
   const timer = setInterval(emit, 1500);
   return () => clearInterval(timer);
 }

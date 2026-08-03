@@ -18,6 +18,11 @@ export function StatusPill({ state }: { state: string }) {
 }
 
 function formatState(state: string) {
+  const normalized = (state ?? '').toUpperCase();
+  if (normalized === 'RUNNING' || normalized === 'MOVING') return 'Running';
+  if (normalized === 'IDLE') return 'Idle';
+  if (normalized === 'STOPPED') return 'Stopped';
+  if (normalized === 'OFFLINE' || normalized === 'NO_DATA') return 'Offline';
   return state.replace(/_/g, ' ');
 }
 

@@ -23,15 +23,35 @@ import { GlivtLogo } from '@/src/components/GlivtLogo';
 import { TextField } from '@/src/components/ui/TextField';
 import { apiErrorMessage } from '@/src/services/apiError';
 import { authStorage } from '@/src/services/authStorage';
-import { useLoginMutation } from '@/src/services/authApi';
+import {
+  useAdminDemoLoginMutation,
+  useDemoLoginMutation,
+  useDriverDemoLoginMutation,
+  useLoginMutation,
+} from '@/src/services/authApi';
 import { baseApi } from '@/src/services/baseApi';
+import { env } from '@/src/config/env';
 import { normalizeCompanyCode } from '@/src/services/tenantIdentity';
-import { clearTenant, setCredentials } from '@/src/store/authSlice';
+import { useResolveTenantMutation } from '@/src/services/tenantApi';
+import { clearTenant, setCredentials, setTenant } from '@/src/store/authSlice';
 import { adoptSessionTenant, clearActiveTenant } from '@/src/store/tenantSlice';
 import { useAppDispatch, useAppSelector } from '@/src/store/hooks';
 import { store } from '@/src/store/store';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+import type { TenantConfig, TokenResponse } from '@/src/types/api';
+
+const DEFAULT_DEMO_CONFIG: TenantConfig = {
+  companyCode: 'DEMO',
+  name: 'Glivt Demo Fleet',
+  appName: 'Glivt Demo',
+  primaryColor: '#0F172A',
+  secondaryColor: '#1E293B',
+  enabledModules: ['LIVE_TRACKING', 'REPORTS', 'ALERTS', 'GEOFENCING'],
+  paymentEnabled: false,
+  maxHistoryDays: 90,
+  status: 'ACTIVE',
+};
 
 const schema = z.object({
   username: z.string().trim().min(1, 'Username is required'),
@@ -48,7 +68,15 @@ export default function LoginScreen() {
   const tenant = useAppSelector((s) => s.auth.tenantConfig);
   const companyCode = useAppSelector((s) => s.auth.companyCode);
   const [login, { isLoading }] = useLoginMutation();
+  const [demoLogin, { isLoading: isDemoLoading }] = useDemoLoginMutation();
+  const [adminDemoLogin, { isLoading: isAdminDemoLoading }] = useAdminDemoLoginMutation();
+  const [driverDemoLogin, { isLoading: isDriverDemoLoading }] = useDriverDemoLoginMutation();
+  const [resolveTenant, { isLoading: isResolvingDemoTenant }] = useResolveTenantMutation();
   const [formError, setFormError] = React.useState<string | null>(null);
+  const [demoError, setDemoError] = React.useState(false);
+  const showDemoLogin = env.demoMode;
+  const anyLoginLoading =
+    isLoading || isDemoLoading || isAdminDemoLoading || isDriverDemoLoading || isResolvingDemoTenant;
 
   const {
     control,
@@ -59,8 +87,41 @@ export default function LoginScreen() {
     defaultValues: { username: '', password: '' },
   });
 
+  const openSession = React.useCallback(
+    async (result: TokenResponse, sessionCompanyCode: string) => {
+      const code = normalizeCompanyCode(sessionCompanyCode) || 'DEMO';
+      const activeConfig: TenantConfig = tenant || {
+        ...DEFAULT_DEMO_CONFIG,
+        companyCode: code,
+        name: result.user.companyName || 'Glivt Fleet',
+      };
+      await authStorage.saveTenant(code, activeConfig);
+      await authStorage.saveSession({
+        accessToken: result.accessToken,
+        companyCode: code,
+        refreshToken: result.refreshToken,
+        user: result.user,
+      });
+      dispatch(baseApi.util.resetApiState());
+      dispatch(setTenant({ companyCode: code, tenantConfig: activeConfig }));
+      dispatch(
+        setCredentials({
+          accessToken: result.accessToken,
+          companyCode: code,
+          refreshToken: result.refreshToken,
+          user: result.user,
+        })
+      );
+      dispatch(adoptSessionTenant(result.user));
+      router.replace('/map');
+    },
+    [dispatch, router, tenant]
+  );
+
   const onSubmit = handleSubmit(async (values) => {
+    if (anyLoginLoading) return;
     setFormError(null);
+    setDemoError(false);
     if (!companyCode) {
       router.replace('/company-code');
       return;
@@ -71,42 +132,64 @@ export default function LoginScreen() {
         username: values.username,
         password: values.password,
       }).unwrap();
-      if (
-        normalizeCompanyCode(store.getState().auth.companyCode) !==
-        normalizeCompanyCode(companyCode)
-      ) {
-        return;
-      }
-      await authStorage.saveSession({
-        accessToken: result.accessToken,
-        companyCode,
-        refreshToken: result.refreshToken,
-        user: result.user,
-      });
-      if (
-        normalizeCompanyCode(store.getState().auth.companyCode) !==
-        normalizeCompanyCode(companyCode)
-      ) {
-        return;
-      }
-      dispatch(baseApi.util.resetApiState());
-      dispatch(
-        setCredentials({
-          accessToken: result.accessToken,
-          companyCode,
-          refreshToken: result.refreshToken,
-          user: result.user,
-        })
-      );
-      // The active tenant always comes from the server-signed session, never from
-      // anything the client remembered, so signing in resets it to this login's own
-      // tenant even if a previous session had switched elsewhere.
-      dispatch(adoptSessionTenant(result.user));
-      router.replace('/map');
+      await openSession(result, companyCode);
     } catch (err) {
       setFormError(apiErrorMessage(err, 'Unable to sign in'));
     }
   });
+
+  const onDemoLogin = async () => {
+    if (anyLoginLoading) return;
+    setFormError(null);
+    setDemoError(false);
+    try {
+      let config: TenantConfig;
+      try {
+        config = await resolveTenant('DEMO').unwrap();
+      } catch {
+        config = DEFAULT_DEMO_CONFIG;
+      }
+      await authStorage.saveTenant(config.companyCode, config);
+      dispatch(setTenant({ companyCode: config.companyCode, tenantConfig: config }));
+
+      const result = await demoLogin().unwrap();
+      await openSession(result, config.companyCode);
+    } catch (err) {
+      setDemoError(true);
+      setFormError(apiErrorMessage(err, 'Unable to open demo account'));
+    }
+  };
+
+  const onRoleDemoLogin = async (role: 'admin' | 'driver') => {
+    if (anyLoginLoading) return;
+    setFormError(null);
+    setDemoError(false);
+    try {
+      let config: TenantConfig;
+      try {
+        config = await resolveTenant('DEMO').unwrap();
+      } catch {
+        config = DEFAULT_DEMO_CONFIG;
+      }
+      await authStorage.saveTenant(config.companyCode, config);
+      dispatch(setTenant({ companyCode: config.companyCode, tenantConfig: config }));
+
+      const result =
+        role === 'admin'
+          ? await adminDemoLogin().unwrap()
+          : await driverDemoLogin().unwrap();
+
+      await openSession(result, config.companyCode);
+    } catch (err) {
+      setDemoError(true);
+      setFormError(
+        apiErrorMessage(
+          err,
+          `Unable to open ${role === 'admin' ? 'Admin' : 'Driver'} demo account`
+        )
+      );
+    }
+  };
 
   const contactProvider = () => {
     const phone = tenant?.supportPhone;
@@ -219,8 +302,54 @@ export default function LoginScreen() {
             {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 
             <View style={styles.submit}>
-              <Button label="Enter Fleet Command" loading={isLoading} onPress={onSubmit} />
+              <Button
+                disabled={anyLoginLoading}
+                label="Login"
+                color="#D1FAE5"
+                textColor="#0F172A"
+                loading={isLoading}
+                onPress={onSubmit}
+              />
             </View>
+
+            {showDemoLogin ? (
+              <>
+                {demoError ? (
+                  <Text style={styles.demoEndpointText}>
+                    Backend: {env.backendBaseUrl || 'not configured'}
+                  </Text>
+                ) : null}
+                <Button
+                  disabled={anyLoginLoading}
+                  icon="shield-crown-outline"
+                  label={demoError ? 'Retry Super Admin Demo' : 'Super Admin Demo'}
+                  loading={isDemoLoading || isResolvingDemoTenant}
+                  onPress={onDemoLogin}
+                  style={styles.demoLogin}
+                  variant="secondary"
+                />
+                <View style={styles.demoRoleRow}>
+                  <Button
+                    disabled={anyLoginLoading}
+                    icon="shield-account-outline"
+                    label="Admin Demo"
+                    loading={isAdminDemoLoading}
+                    onPress={() => void onRoleDemoLogin('admin')}
+                    style={styles.demoRoleBtn}
+                    variant="secondary"
+                  />
+                  <Button
+                    disabled={anyLoginLoading}
+                    icon="account-badge-outline"
+                    label="Driver Demo"
+                    loading={isDriverDemoLoading}
+                    onPress={() => void onRoleDemoLogin('driver')}
+                    style={styles.demoRoleBtn}
+                    variant="secondary"
+                  />
+                </View>
+              </>
+            ) : null}
 
             <Pressable
               accessibilityRole="button"
@@ -248,10 +377,10 @@ export default function LoginScreen() {
 
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ disabled: isLoading }}
-            disabled={isLoading}
+            accessibilityState={{ disabled: anyLoginLoading }}
+            disabled={anyLoginLoading}
             onPress={clearCompanyCode}
-            style={[styles.clearCode, isLoading && styles.clearCodeDisabled]}>
+            style={[styles.clearCode, anyLoginLoading && styles.clearCodeDisabled]}>
             <Text style={styles.clearCodeText}>
               Company code: <Text style={styles.clearCodeStrong}>{companyCode ?? '-'}</Text> | Change
             </Text>
@@ -441,6 +570,22 @@ const makeStyles = (c: ThemeColors) =>
       textAlign: 'center',
     },
     submit: { marginTop: spacing.lg },
+    demoEndpointText: {
+      color: 'rgba(226,239,247,0.66)',
+      fontSize: 10,
+      fontWeight: '700',
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    demoLogin: { marginTop: spacing.sm },
+    demoRoleRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    demoRoleBtn: {
+      flex: 1,
+    },
     link: { alignSelf: 'center', marginTop: spacing.md, padding: spacing.xs },
     linkText: { color: '#69D9F3', fontSize: typography.label, fontWeight: '700' },
     contactCard: {

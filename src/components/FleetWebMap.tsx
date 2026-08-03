@@ -1,4 +1,4 @@
-﻿import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import EmbeddedWebView, {
@@ -33,6 +33,9 @@ export type WebMapProjection = {
 
 export type FleetWebMapHandle = {
   fitAll: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetBearing: () => void;
 };
 
 type FleetWebMapProps = {
@@ -88,6 +91,9 @@ export const FleetWebMap = forwardRef<FleetWebMapHandle, FleetWebMapProps>(funct
     ref,
     () => ({
       fitAll: () => webRef.current?.injectJavaScript('window.__glivtFit && window.__glivtFit(); true;'),
+      zoomIn: () => webRef.current?.injectJavaScript('window.__glivtZoomIn && window.__glivtZoomIn(); true;'),
+      zoomOut: () => webRef.current?.injectJavaScript('window.__glivtZoomOut && window.__glivtZoomOut(); true;'),
+      resetBearing: () => webRef.current?.injectJavaScript('window.__glivtResetBearing && window.__glivtResetBearing(); true;'),
     }),
     []
   );
@@ -611,6 +617,9 @@ function buildHtml(mapStyle: MapStyleSpec): string {
         }
 
         window.__glivtFit = fitToData;
+        window.__glivtZoomIn = function () { if (map) map.zoomIn(); };
+        window.__glivtZoomOut = function () { if (map) map.zoomOut(); };
+        window.__glivtResetBearing = function () { if (map) map.setBearing(0); };
         window.__glivtSyncRoute = function (line) {
           LINE = Array.isArray(line) ? line : [];
           if (!BASE_READY) return;
