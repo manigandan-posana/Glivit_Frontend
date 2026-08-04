@@ -5,8 +5,8 @@ import * as FileSystem from 'expo-file-system';
 import * as SecureStore from 'expo-secure-store';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, SlideInUp, SlideOutUp } from 'react-native-reanimated';
+import { Alert, Modal, Pressable, StyleSheet, Switch, Text, View, Platform } from 'react-native';
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useLogoutMutation } from '@/src/services/authApi';
@@ -18,6 +18,8 @@ import { clearActiveTenant } from '@/src/store/tenantSlice';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 import { ColorPickerModal } from './ui/ColorPickerModal';
+import { ImageCropperModal } from './ui/ImageCropperModal';
+import { useGetProfileImageQuery, useUpdateProfileImageMutation } from '@/src/services/operationsApi';
 
 const PROFILE_IMG_KEY = 'glivt.profile.imageUri';
 
@@ -29,7 +31,7 @@ interface ProfilePanelProps {
 export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const { colors: c, mode, setMode, colors, setPrimaryColor } = useTheme();
+  const { colors: c, mode, setMode, colors, setPrimaryColor, autoFollowVehicle, setAutoFollowVehicle } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(c, insets), [c, insets]);
   const user = useAppSelector((s) => s.auth.user);
@@ -37,21 +39,34 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   const [logout] = useLogoutMutation();
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [profileUri, setProfileUri] = useState<string | null>(null);
+  const [cropperVisible, setCropperVisible] = useState(false);
+  const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
 
-  // Load saved profile image
+  // Sync profile photo with database
+  const { data: dbProfileImage } = useGetProfileImageQuery(undefined, { skip: !user?.id });
+  const [updateProfileImage] = useUpdateProfileImageMutation();
+
+  // Load saved profile image on mount
   useEffect(() => {
     SecureStore.getItemAsync(PROFILE_IMG_KEY).then(uri => {
       if (uri) setProfileUri(uri);
     });
   }, []);
 
+  // Sync db image to state
+  useEffect(() => {
+    if (dbProfileImage) {
+      setProfileUri(dbProfileImage);
+      SecureStore.setItemAsync(PROFILE_IMG_KEY, dbProfileImage).catch(() => {});
+    }
+  }, [dbProfileImage]);
+
   const handlePickImage = useCallback(async (fromCamera: boolean) => {
     try {
       let result;
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
+        allowsEditing: false,
         quality: 0.8,
       };
 
@@ -73,14 +88,8 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        // Move to document directory to persist
-        const fileName = asset.uri.split('/').pop() || 'profile.jpg';
-        const newPath = FileSystem.documentDirectory + fileName;
-        await FileSystem.copyAsync({ from: asset.uri, to: newPath });
-        
-        setProfileUri(newPath);
-        await SecureStore.setItemAsync(PROFILE_IMG_KEY, newPath);
-        // TODO: Sync newPath with backend /api/users/profile-image
+        setPendingImageUri(asset.uri);
+        setCropperVisible(true);
       }
     } catch (e) {
       console.error(e);
@@ -88,10 +97,27 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
     }
   }, []);
 
+  const handleCroppedSave = useCallback(async (croppedUri: string) => {
+    try {
+      setCropperVisible(false);
+      setProfileUri(croppedUri);
+      await SecureStore.setItemAsync(PROFILE_IMG_KEY, croppedUri);
+
+      const base64Data = await FileSystem.readAsStringAsync(croppedUri, {
+        encoding: 'base64',
+      });
+      const dataUrl = `data:image/jpeg;base64,${base64Data}`;
+      
+      await updateProfileImage(dataUrl).unwrap();
+    } catch (e) {
+      console.error('Failed to sync profile picture to backend', e);
+    }
+  }, [updateProfileImage]);
+
   const promptImageChoice = () => {
     Alert.alert('Profile Photo', 'Choose an option', [
-      { text: 'Take Photo', onPress: () => handlePickImage(true) },
-      { text: 'Choose from Gallery', onPress: () => handlePickImage(false) },
+      { text: '📷 Take Photo', onPress: () => handlePickImage(true) },
+      { text: '🖼 Choose from Gallery', onPress: () => handlePickImage(false) },
       { text: 'Cancel', style: 'cancel' }
     ]);
   };
@@ -126,11 +152,15 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   const initials = displayName.substring(0, 2).toUpperCase();
 
   return (
-    <Modal transparent statusBarTranslucent animationType="none" visible={visible} onRequestClose={onClose}>
-      <Animated.View style={styles.backdrop} entering={FadeIn.duration(200)} exiting={FadeOut.duration(200)}>
+    <>
+      <Animated.View style={styles.backdrop} entering={FadeIn.duration(250)} exiting={FadeOut.duration(250)}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         
-        <Animated.View style={styles.panel} entering={SlideInUp.springify().damping(18).stiffness(150)} exiting={SlideOutUp.duration(200)}>
+        <Animated.View style={styles.panel} entering={SlideInDown.duration(250)} exiting={SlideOutDown.duration(250)}>
+          <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
+            <MaterialCommunityIcons name="close" size={24} color={c.textSecondary} />
+          </Pressable>
+
           <View style={styles.header}>
             <View style={styles.avatarContainer}>
               <Pressable onPress={promptImageChoice}>
@@ -147,7 +177,7 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
               </Pressable>
             </View>
             <Text style={styles.name}>{displayName}</Text>
-            <Text style={styles.role}>{roleLabel} • ID: {user?.userId ?? 'Unknown'}</Text>
+            <Text style={styles.role}>{roleLabel} • ID: {user?.id ?? 'Unknown'}</Text>
           </View>
 
           <View style={styles.menu}>
@@ -157,11 +187,6 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
                 <Text style={styles.menuItemText}>Switch Tenant</Text>
               </Pressable>
             )}
-
-            <Pressable style={styles.menuItem} onPress={() => { onClose(); router.push('/timeline' as never); }}>
-              <MaterialCommunityIcons name="chart-timeline-variant" size={24} color={c.textSecondary} />
-              <Text style={styles.menuItemText}>Your Timeline</Text>
-            </Pressable>
 
             <View style={styles.menuItem}>
               <MaterialCommunityIcons name="theme-light-dark" size={24} color={c.textSecondary} />
@@ -173,11 +198,20 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
               />
             </View>
 
-            <Pressable style={styles.menuItem} onPress={() => setShowColorPicker(true)}>
-              <MaterialCommunityIcons name="palette" size={24} color={c.textSecondary} />
-              <Text style={styles.menuItemText}>Application Color Theme</Text>
-              <View style={[styles.colorPreview, { backgroundColor: colors.primary }]} />
+            <Pressable style={styles.menuItem} onPress={() => { onClose(); router.push('/timeline' as never); }}>
+              <MaterialCommunityIcons name="chart-timeline-variant" size={24} color={c.textSecondary} />
+              <Text style={styles.menuItemText}>Your Timeline</Text>
             </Pressable>
+
+            <View style={styles.menuItem}>
+              <MaterialCommunityIcons name="navigation-variant-outline" size={24} color={c.textSecondary} />
+              <Text style={styles.menuItemText}>Auto Follow Vehicle</Text>
+              <Switch 
+                value={autoFollowVehicle} 
+                onValueChange={setAutoFollowVehicle} 
+                trackColor={{ true: c.primary, false: c.borderStrong }} 
+              />
+            </View>
 
             <View style={styles.divider} />
 
@@ -195,26 +229,49 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
         color={colors.primary} 
         onColorChange={setPrimaryColor} 
       />
-    </Modal>
+
+      <ImageCropperModal
+        visible={cropperVisible}
+        imageUri={pendingImageUri}
+        onClose={() => setCropperVisible(false)}
+        onSave={handleCroppedSave}
+      />
+    </>
   );
 }
 
 const makeStyles = (c: ThemeColors, insets: any) =>
   StyleSheet.create({
     backdrop: {
-      flex: 1,
-      backgroundColor: c.overlay,
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+      justifyContent: 'flex-end',
+      zIndex: 9999,
+    },
+    closeButton: {
+      position: 'absolute',
+      top: spacing.md,
+      right: spacing.md,
+      zIndex: 10,
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     panel: {
       backgroundColor: c.surfaceElevated,
-      borderBottomLeftRadius: radius.xl,
-      borderBottomRightRadius: radius.xl,
-      paddingTop: insets.top + spacing.md,
-      paddingBottom: spacing.lg,
+      borderTopLeftRadius: radius.xl,
+      borderTopRightRadius: radius.xl,
+      paddingTop: spacing.md,
+      paddingBottom: Math.max(insets.bottom, spacing.lg),
       elevation: 8,
       shadowColor: c.shadowColor,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.2,
+      shadowOffset: { width: 0, height: -4 },
+      shadowOpacity: 0.15,
       shadowRadius: 12,
     },
     header: {

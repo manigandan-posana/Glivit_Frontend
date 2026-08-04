@@ -55,74 +55,74 @@ export type ThemeColors = {
 };
 
 export const lightColors: ThemeColors = {
-  primary: '#0F9D58',
-  secondary: '#2563EB',
-  onPrimary: '#FFFFFF',
-  primaryGreen: '#0F9D58',
-  darkGreen: '#0B7C46',
-  accent: '#0F9D58',
-  accentSoft: 'rgba(15, 157, 88, 0.12)',
-
-  pageBackground: '#F3F5F7',
-  cardBackground: '#FFFFFF',
-  surface: '#FFFFFF',
-  surfaceAlt: '#F7F9FB',
-  surfaceElevated: '#FFFFFF',
-  loginBackground: '#0C1420',
-
-  divider: '#E6EAEE',
-  border: '#E6EAEE',
-  borderStrong: '#D3DAE1',
-
-  textPrimary: '#0E1621',
-  textSecondary: '#59646F',
-  textMuted: '#8B97A3',
-
-  blue: '#2563EB',
-  info: '#2563EB',
-  success: '#0F9D58',
-  warning: '#B45309',
-  warningOrange: '#F59E0B',
-  danger: '#DC2626',
-  errorRed: '#DC2626',
-
-  white: '#FFFFFF',
-  black: '#0B0F14',
-  overlay: 'rgba(10,14,19,0.55)',
-  shadowColor: '#0E1621',
-};
-
-export const darkColors: ThemeColors = {
-  primary: '#0F9D58',
+  primary: '#22C55E',
   secondary: '#3B82F6',
   onPrimary: '#FFFFFF',
-  primaryGreen: '#0F9D58',
-  darkGreen: '#0B7C46',
-  accent: '#0F9D58',
-  accentSoft: 'rgba(15, 157, 88, 0.14)',
+  primaryGreen: '#22C55E',
+  darkGreen: '#16A34A',
+  accent: '#22C55E',
+  accentSoft: '#DCFCE7',
 
-  pageBackground: '#0A0E13',
-  cardBackground: '#121924',
-  surface: '#121924',
-  surfaceAlt: '#0E141D',
-  surfaceElevated: '#18212E',
-  loginBackground: '#0A0E13',
+  pageBackground: '#F8FAFC',
+  cardBackground: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F8FAFC',
+  surfaceElevated: '#FFFFFF',
+  loginBackground: '#0F172A',
 
-  divider: '#233040',
-  border: '#233040',
-  borderStrong: '#2E3D4F',
+  divider: '#E2E8F0',
+  border: '#CBD5E1',
+  borderStrong: '#94A3B8',
 
-  textPrimary: '#E9EEF4',
-  textSecondary: '#9FB0C0',
-  textMuted: '#6C7C8C',
+  textPrimary: '#0F172A',
+  textSecondary: '#334155',
+  textMuted: '#64748B',
 
   blue: '#3B82F6',
   info: '#3B82F6',
   success: '#22C55E',
-  warning: '#FBBF24',
+  warning: '#F59E0B',
   warningOrange: '#F59E0B',
-  danger: '#F87171',
-  errorRed: '#F87171',
+  danger: '#EF4444',
+  errorRed: '#EF4444',
+
+  white: '#FFFFFF',
+  black: '#0F172A',
+  overlay: 'rgba(15, 23, 42, 0.55)',
+  shadowColor: '#0F172A',
+};
+
+export const darkColors: ThemeColors = {
+  primary: '#22C55E',
+  secondary: '#3B82F6',
+  onPrimary: '#FFFFFF',
+  primaryGreen: '#22C55E',
+  darkGreen: '#16A34A',
+  accent: '#22C55E',
+  accentSoft: 'rgba(34, 197, 94, 0.14)',
+
+  pageBackground: '#0F172A',
+  cardBackground: '#1E293B',
+  surface: '#1E293B',
+  surfaceAlt: '#0F172A',
+  surfaceElevated: '#334155',
+  loginBackground: '#0F172A',
+
+  divider: '#334155',
+  border: '#475569',
+  borderStrong: '#64748B',
+
+  textPrimary: '#F8FAFC',
+  textSecondary: '#E2E8F0',
+  textMuted: '#94A3B8',
+
+  blue: '#3B82F6',
+  info: '#3B82F6',
+  success: '#22C55E',
+  warning: '#F59E0B',
+  warningOrange: '#F59E0B',
+  danger: '#EF4444',
+  errorRed: '#EF4444',
 
   white: '#FFFFFF',
   black: '#000000',
@@ -143,11 +143,11 @@ export function stateColorsFor(colors: ThemeColors): Record<string, string> {
     STOPPED: '#EF4444',
     IDLE: '#F59E0B',
     INACTIVE: colors.textMuted,
-    OFFLINE: colors.textMuted,
-    NO_DATA: colors === darkColors ? '#4B5A6A' : '#B8C0C8',
-    EXPIRED: colors === darkColors ? '#3A4757' : '#6E7A86',
-    SUSPENDED: colors === darkColors ? '#3A4757' : '#6E7A86',
-    IMMOBILISED: '#F43F5E',
+    OFFLINE: '#6B7280',
+    NO_DATA: colors === darkColors ? '#475569' : '#94A3B8',
+    EXPIRED: colors === darkColors ? '#334155' : '#64748B',
+    SUSPENDED: colors === darkColors ? '#334155' : '#64748B',
+    IMMOBILISED: '#EF4444',
     GPS_INVALID: '#F59E0B',
     POWER_DISCONNECTED: '#F59E0B',
     HEALTHY: colors.primaryGreen,
@@ -220,17 +220,35 @@ export const palette = lightColors;
 
 export const stateColors: Record<string, string> = stateColorsFor(lightColors);
 
+function isGrayColor(hex?: string): boolean {
+  if (!hex) return false;
+  const cleanHex = hex.replace('#', '');
+  if (cleanHex.length === 3) {
+    const r = parseInt(cleanHex[0], 16);
+    const g = parseInt(cleanHex[1], 16);
+    const b = parseInt(cleanHex[2], 16);
+    return Math.abs(r - g) < 2 && Math.abs(g - b) < 2;
+  }
+  if (cleanHex.length === 6) {
+    const r = parseInt(cleanHex.substring(0, 2), 16);
+    const g = parseInt(cleanHex.substring(2, 4), 16);
+    const b = parseInt(cleanHex.substring(4, 6), 16);
+    return Math.abs(r - g) < 15 && Math.abs(g - b) < 15;
+  }
+  return false;
+}
+
 /** Builds the active colour set, applying tenant overrides when present. */
 export function buildColors(
   scheme: Scheme = 'light',
   overrides?: { primary?: string; secondary?: string }
 ): ThemeColors {
   const base = schemes[scheme];
-  if (!overrides?.primary && !overrides?.secondary) return base;
+  const isValidPrimary = overrides?.primary && !isGrayColor(overrides.primary);
   return {
     ...base,
-    primary: overrides?.primary || base.primary,
-    primaryGreen: overrides?.primary || base.primaryGreen,
+    primary: isValidPrimary ? (overrides?.primary || base.primary) : base.primary,
+    primaryGreen: isValidPrimary ? (overrides?.primary || base.primaryGreen) : base.primaryGreen,
     secondary: overrides?.secondary || base.secondary,
   };
 }

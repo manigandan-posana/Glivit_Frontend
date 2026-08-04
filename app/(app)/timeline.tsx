@@ -29,26 +29,43 @@ export default function TimelineAnalyticsScreen() {
   // Calculate day difference for mock data scaling
   const daysDiff = Math.max(1, Math.ceil((dateRange.endDate.getTime() - dateRange.startDate.getTime()) / (1000 * 60 * 60 * 24)));
 
-  // Mock data generation based on date range
-  const pieData = useMemo(() => {
-    return [
-      { value: 62, color: c.success, text: '62%' },
-      { value: 18, color: c.warningOrange, text: '18%' },
-      { value: 15, color: c.danger, text: '15%' },
-      { value: 5, color: c.textMuted, text: '5%' },
-    ];
-  }, [c]);
+  // Mock data scaling factors based on duration
+  const totalDistance = Math.round(daysDiff * 142.5);
+  const drivingHours = Math.round(daysDiff * 4.2);
+  const idleHours = Math.round(daysDiff * 1.5);
+  const stoppedHours = Math.round(daysDiff * 17.5);
+  const offlineHours = Math.round(daysDiff * 0.8);
+  const totalTrips = Math.round(daysDiff * 3.4);
+  const avgSpeed = 48; // Constant representation
+  const maxSpeed = 104; // Constant representation
 
+  // Pie chart data showing percentage values on the segments
+  const pieData = useMemo(() => {
+    const total = drivingHours + idleHours + stoppedHours + offlineHours || 1;
+    const drivingPct = Math.round((drivingHours / total) * 100);
+    const idlePct = Math.round((idleHours / total) * 100);
+    const stoppedPct = Math.round((stoppedHours / total) * 100);
+    const offlinePct = 100 - (drivingPct + idlePct + stoppedPct);
+
+    return [
+      { value: drivingPct, color: c.success, text: `${drivingPct}%` },
+      { value: idlePct, color: c.warningOrange, text: `${idlePct}%` },
+      { value: stoppedPct, color: c.danger, text: `${stoppedPct}%` },
+      { value: offlinePct, color: c.textMuted, text: `${offlinePct}%` },
+    ];
+  }, [drivingHours, idleHours, stoppedHours, offlineHours, c]);
+
+  // Bar chart data for daily distance travelled in KM
   const barData = useMemo(() => {
     const data = [];
     let currentDate = new Date(dateRange.startDate);
     
-    // Limit to max 14 bars for visibility, or sample if necessary
-    const displayDays = Math.min(daysDiff, 14);
-    const step = Math.ceil(daysDiff / displayDays);
+    // Limit to max 7 bars for clear readability, or sample if range is larger
+    const displayDays = Math.min(daysDiff, 7);
+    const step = Math.max(1, Math.floor(daysDiff / displayDays));
     
     for (let i = 0; i < displayDays; i++) {
-      const distance = Math.floor(Math.random() * 150) + 50; // Random 50-200 KM
+      const distance = Math.floor(Math.random() * 80) + 70; // Random 70-150 KM
       data.push({
         value: distance,
         label: currentDate.toLocaleDateString(undefined, { weekday: 'short' }),
@@ -56,13 +73,13 @@ export default function TimelineAnalyticsScreen() {
           <Text style={styles.barTopLabel}>{distance}</Text>
         ),
         frontColor: c.primary,
-        dateStr: currentDate.toLocaleDateString(),
-        trips: Math.floor(Math.random() * 5) + 1,
+        dateStr: currentDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        trips: Math.floor(Math.random() * 3) + 2,
       });
       currentDate.setDate(currentDate.getDate() + step);
     }
     return data;
-  }, [daysDiff, dateRange.startDate, c]);
+  }, [daysDiff, dateRange.startDate, c, styles.barTopLabel]);
 
   const renderTooltip = (item: any) => {
     return (
@@ -81,12 +98,27 @@ export default function TimelineAnalyticsScreen() {
         <Text style={styles.subtitle}>{activeTenantName || 'Glivt Fleet'}</Text>
       </View>
 
+      {/* Date Picker Card */}
       <Card style={styles.card}>
         <DateRangePicker value={dateRange} onChange={setDateRange} />
       </Card>
 
+      {/* Summary Statistic Cards */}
+      <View style={styles.statsGrid}>
+        <StatCard icon="chevron-triple-right" title="Total Distance" value={`${totalDistance} KM`} color={c.primary} />
+        <StatCard icon="steering" title="Driving Time" value={`${drivingHours}h`} color={c.success} />
+        <StatCard icon="engine-outline" title="Idle Time" value={`${idleHours}h`} color={c.warningOrange} />
+        <StatCard icon="pause-circle-outline" title="Stopped Time" value={`${stoppedHours}h`} color={c.danger} />
+        <StatCard icon="wifi-off" title="Offline Time" value={`${offlineHours}h`} color={c.textMuted} />
+        <StatCard icon="speedometer" title="Avg Speed" value={`${avgSpeed} km/h`} color={c.primary} />
+        <StatCard icon="speedometer-red" title="Max Speed" value={`${maxSpeed} km/h`} color={c.danger} />
+        <StatCard icon="map-marker-distance" title="Total Trips" value={`${totalTrips}`} color={c.success} />
+      </View>
+
+      {/* Vehicle Time Distribution Donut Chart */}
       <Card style={styles.card}>
         <Text style={styles.cardTitle}>Vehicle Time Distribution</Text>
+        <Text style={styles.cardSubtitle}>Activity allocation across selected timeline</Text>
         
         <View style={styles.chartContainer}>
           <PieChart
@@ -95,52 +127,72 @@ export default function TimelineAnalyticsScreen() {
             innerRadius={60}
             radius={100}
             showText
-            textColor={isDark ? c.textPrimary : '#FFFFFF'}
-            textSize={12}
-            textBackgroundRadius={12}
+            textColor="#FFFFFF"
+            textSize={11}
+            fontWeight="bold"
             centerLabelComponent={() => (
               <View style={styles.centerLabel}>
                 <Text style={styles.centerLabelValue}>{daysDiff * 24}h</Text>
-                <Text style={styles.centerLabelText}>Total</Text>
+                <Text style={styles.centerLabelText}>Total Duration</Text>
               </View>
             )}
           />
         </View>
 
         <View style={styles.legendContainer}>
-          <LegendItem color={c.success} label="Driving" percentage="62%" duration={`${Math.floor(daysDiff * 24 * 0.62)}h`} />
-          <LegendItem color={c.warningOrange} label="Idle" percentage="18%" duration={`${Math.floor(daysDiff * 24 * 0.18)}h`} />
-          <LegendItem color={c.danger} label="Stopped" percentage="15%" duration={`${Math.floor(daysDiff * 24 * 0.15)}h`} />
-          <LegendItem color={c.textMuted} label="Offline" percentage="5%" duration={`${Math.floor(daysDiff * 24 * 0.05)}h`} />
+          <LegendItem color={c.success} label="Driving" percentage={`${Math.round((drivingHours / (daysDiff * 24)) * 100)}%`} duration={`${drivingHours}h`} />
+          <LegendItem color={c.warningOrange} label="Idle" percentage={`${Math.round((idleHours / (daysDiff * 24)) * 100)}%`} duration={`${idleHours}h`} />
+          <LegendItem color={c.danger} label="Stopped" percentage={`${Math.round((stoppedHours / (daysDiff * 24)) * 100)}%`} duration={`${stoppedHours}h`} />
+          <LegendItem color={c.textMuted} label="Offline" percentage={`${Math.round((offlineHours / (daysDiff * 24)) * 100)}%`} duration={`${offlineHours}h`} />
         </View>
       </Card>
 
+      {/* Daily Distance Travelled Bar Chart */}
       <Card style={styles.card}>
         <Text style={styles.cardTitle}>Daily Distance Travelled</Text>
-        <Text style={styles.cardSubtitle}>Kilometers (KM)</Text>
+        <Text style={styles.cardSubtitle}>Travelled distance in Kilometers (KM)</Text>
         
-        <View style={styles.chartContainer}>
+        <View style={styles.barChartContainer}>
           <BarChart
             data={barData}
-            barWidth={28}
-            spacing={24}
+            barWidth={32}
+            spacing={20}
             roundedTop
             roundedBottom
             xAxisThickness={1}
-            yAxisThickness={0}
+            yAxisThickness={1}
             yAxisTextStyle={styles.axisText}
             xAxisLabelTextStyle={styles.axisText}
             noOfSections={4}
-            maxValue={250}
+            maxValue={200}
             isAnimated
             rulesColor={c.divider}
             xAxisColor={c.borderStrong}
+            yAxisColor={c.borderStrong}
             renderTooltip={renderTooltip}
-            leftShiftForTooltip={15}
+            leftShiftForTooltip={10}
+            yAxisLabelSuffix=" KM"
           />
         </View>
       </Card>
     </ScrollView>
+  );
+}
+
+function StatCard({ icon, title, value, color }: { icon: string; title: string; value: string; color: string }) {
+  const { colors: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
+
+  return (
+    <View style={styles.statCard}>
+      <View style={[styles.statIconContainer, { backgroundColor: `${color}15` }]}>
+        <MaterialCommunityIcons name={icon as any} size={20} color={color} />
+      </View>
+      <View style={styles.statInfo}>
+        <Text style={styles.statTitle}>{title}</Text>
+        <Text style={styles.statValue}>{value}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -151,11 +203,8 @@ function LegendItem({ color, label, percentage, duration }: { color: string; lab
   return (
     <View style={styles.legendItem}>
       <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <View style={styles.legendTextContainer}>
-        <Text style={styles.legendLabel}>{label}</Text>
-        <Text style={styles.legendPercentage}>{percentage}</Text>
-      </View>
-      <Text style={styles.legendDuration}>{duration}</Text>
+      <Text style={styles.legendLabel}>{label}</Text>
+      <Text style={styles.legendValue}>{percentage} ({duration})</Text>
     </View>
   );
 }
@@ -184,77 +233,123 @@ const makeStyles = (c: ThemeColors) =>
     },
     card: {
       gap: spacing.md,
+      padding: spacing.lg,
+      borderRadius: radius.lg,
     },
     cardTitle: {
-      fontSize: typography.h3,
+      fontSize: typography.title,
       fontWeight: '800',
       color: c.textPrimary,
     },
     cardSubtitle: {
       fontSize: typography.caption,
       color: c.textSecondary,
-      marginTop: -spacing.sm,
+      marginTop: -spacing.xs,
+    },
+    statsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      justifyContent: 'space-between',
+    },
+    statCard: {
+      width: '48%',
+      backgroundColor: c.surface,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    statIconContainer: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    statInfo: {
+      flex: 1,
+    },
+    statTitle: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: c.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    statValue: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: c.textPrimary,
+      marginTop: 2,
     },
     chartContainer: {
       alignItems: 'center',
       justifyContent: 'center',
-      marginVertical: spacing.lg,
+      marginVertical: spacing.md,
+    },
+    barChartContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginVertical: spacing.md,
+      paddingRight: spacing.lg,
     },
     centerLabel: {
       alignItems: 'center',
       justifyContent: 'center',
     },
     centerLabelValue: {
-      fontSize: typography.h3,
+      fontSize: typography.title,
       fontWeight: '900',
       color: c.textPrimary,
     },
     centerLabelText: {
-      fontSize: typography.caption,
-      color: c.textSecondary,
+      fontSize: 9,
+      color: c.textMuted,
+      fontWeight: '700',
+      textTransform: 'uppercase',
     },
     legendContainer: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: spacing.md,
       marginTop: spacing.md,
+      justifyContent: 'space-between',
     },
     legendItem: {
       flexDirection: 'row',
       alignItems: 'center',
       width: '46%',
-      gap: spacing.sm,
+      gap: spacing.xs + 2,
     },
     legendDot: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-    },
-    legendTextContainer: {
-      flex: 1,
+      width: 10,
+      height: 10,
+      borderRadius: 5,
     },
     legendLabel: {
       fontSize: typography.caption,
-      fontWeight: '600',
-      color: c.textPrimary,
-    },
-    legendPercentage: {
-      fontSize: 11,
-      color: c.textSecondary,
-    },
-    legendDuration: {
-      fontSize: typography.caption,
       fontWeight: '700',
       color: c.textPrimary,
+      flex: 1,
+    },
+    legendValue: {
+      fontSize: typography.caption,
+      fontWeight: '600',
+      color: c.textSecondary,
     },
     axisText: {
       color: c.textSecondary,
-      fontSize: 11,
+      fontSize: 9,
+      fontWeight: '600',
     },
     barTopLabel: {
       color: c.textPrimary,
-      fontSize: 10,
-      fontWeight: '700',
+      fontSize: 9,
+      fontWeight: '800',
       marginBottom: 4,
       textAlign: 'center',
     },

@@ -40,13 +40,7 @@ const LINKS: DrawerLink[] = [
   { label: 'All Vehicles', icon: 'car', route: '/vehicles', permission: P.VIEW_ALL_VEHICLES },
   { label: 'Geofences', icon: 'vector-polygon', route: '/geofences', permission: P.MANAGE_GEOFENCES, module: 'geofences' },
   { label: 'Reports', icon: 'file-chart-outline', route: '/reports', permission: P.VIEW_REPORTS, module: 'reports' },
-  { label: 'Device Commands', icon: 'console-line', route: '/commands', permission: P.SEND_COMMANDS },
   { label: 'Management', icon: 'shield-account-outline', route: '/management', permission: P.MANAGE_DEVICES },
-];
-
-const ACCOUNT_LINKS: DrawerLink[] = [
-  { label: 'Manage Tenants', icon: 'office-building-cog-outline', route: '/manage-tenants' },
-  { label: 'Settings', icon: 'cog-outline', route: '/settings' },
 ];
 
 function HeaderBackground() {
@@ -91,7 +85,6 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
     (s) =>
       s.auth.user?.homeTenantId != null && s.auth.user.homeTenantId !== s.tenant.activeTenantId
   );
-  const [logout] = useLogoutMutation();
 
   const canViewAll = useHasPermission(P.VIEW_ALL_VEHICLES);
   const canLive = useHasPermission(P.VIEW_LIVE_LOCATION);
@@ -125,27 +118,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
     router.push(route as never);
   };
 
-  const onLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await logout().unwrap();
-          } catch {
-            // Best-effort; clear local session
-          }
-          dispatch(clearSession());
-          dispatch(clearActiveTenant());
-          dispatch(baseApi.util.resetApiState());
-          await authStorage.clearSession().catch(() => undefined);
-          router.replace('/login');
-        },
-      },
-    ]);
-  };
+
 
   const displayName = user?.name ?? user?.username ?? 'Demo Admin';
   const tenantLabel = activeTenantName ?? tenant?.appName ?? tenant?.name ?? 'Glivt Demo Fleet';
@@ -205,28 +178,7 @@ export function AppDrawerContent(props: DrawerContentComponentProps) {
             onPress={() => go(link.route)}
           />
         ))}
-
-        <View style={styles.divider} />
-        <Text style={styles.sectionHeading}>ACCOUNT</Text>
-        {visible(ACCOUNT_LINKS).map((link) => (
-          <DrawerRow
-            active={activeRouteName === routeKey(link.route)}
-            icon={link.icon}
-            key={link.route}
-            label={link.label}
-            onPress={() => go(link.route)}
-          />
-        ))}
       </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.xs }]}>
-        <DrawerRow
-          icon="logout"
-          isLogout
-          label="Logout"
-          onPress={onLogout}
-        />
-      </View>
     </View>
   );
 }

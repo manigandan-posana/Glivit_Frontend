@@ -1,14 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Redirect } from 'expo-router';
-import { Drawer } from 'expo-router/drawer';
-import { DrawerToggleButton } from '@react-navigation/drawer';
+import { Redirect, Tabs, useNavigation } from 'expo-router';
 import React, { useState, useEffect } from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View, StyleSheet } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { Image } from 'expo-image';
 
-import { AppDrawerContent } from '@/src/components/AppDrawerContent';
 import { ProfilePanel } from '@/src/components/ProfilePanel';
+import { NotificationCenter } from '@/src/components/NotificationCenter';
 import { baseApi } from '@/src/services/baseApi';
 import {
   useAppSelector,
@@ -19,6 +17,27 @@ import {
 import { store } from '@/src/store/store';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius } from '@/src/theme/tokens';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+
+function HeaderBackButton() {
+  const navigation = useNavigation();
+  return (
+    <Pressable
+      accessibilityLabel="Go back"
+      accessibilityRole="button"
+      onPress={() => {
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+        }
+      }}
+      style={{ paddingLeft: 16, paddingRight: 8 }}
+      hitSlop={12}
+    >
+      <MaterialCommunityIcons name="arrow-left" color="#FFFFFF" size={24} />
+    </Pressable>
+  );
+}
 
 function HeaderReloadButton() {
   const [reloading, setReloading] = React.useState(false);
@@ -71,27 +90,29 @@ function HeaderReloadButton() {
 
 const PROFILE_IMG_KEY = 'glivt.profile.imageUri';
 
-function HeaderRight({ onProfilePress }: { onProfilePress: () => void }) {
-  const [profileUri, setProfileUri] = useState<string | null>(null);
-
-  // Poll for changes when the panel is closed, since this is in the header
-  useEffect(() => {
-    let interval = setInterval(() => {
-      SecureStore.getItemAsync(PROFILE_IMG_KEY).then(uri => {
-        if (uri && uri !== profileUri) setProfileUri(uri);
-      }).catch(() => {});
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [profileUri]);
-
+function HeaderRight({
+  profileUri,
+  initials,
+  onPressProfile,
+}: {
+  profileUri: string | null;
+  initials: string;
+  onPressProfile: () => void;
+}) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: 8 }}>
-      <HeaderReloadButton />
-      <Pressable onPress={onProfilePress} hitSlop={12} style={{ paddingHorizontal: 12 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingRight: 16 }}>
+      <NotificationCenter tint="#FFFFFF" />
+      <Pressable onPress={onPressProfile} hitSlop={8}>
         {profileUri ? (
-          <Image source={{ uri: profileUri }} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }} contentFit="cover" />
+          <Image
+            source={{ uri: profileUri }}
+            style={{ width: 30, height: 30, borderRadius: 15, borderWidth: 1.5, borderColor: '#FFFFFF' }}
+            contentFit="cover"
+          />
         ) : (
-          <MaterialCommunityIcons color="#FFFFFF" name="account-circle" size={28} />
+          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255, 255, 255, 0.25)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#FFFFFF' }}>
+            <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>{initials}</Text>
+          </View>
         )}
       </Pressable>
     </View>
@@ -104,6 +125,22 @@ export default function AppLayout() {
   const bootstrapped = useAppSelector((s) => s.auth.bootstrapped);
   const tenantEpoch = useTenantEpoch();
   const { colors: c } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  const [profileVisible, setProfileVisible] = useState(false);
+  const [profileUri, setProfileUri] = useState<string | null>(null);
+  const user = useAppSelector((s) => s.auth.user);
+  const displayName = user?.name ?? user?.username ?? 'Demo Admin';
+  const initials = displayName.substring(0, 2).toUpperCase();
+
+  useEffect(() => {
+    let interval = setInterval(() => {
+      SecureStore.getItemAsync(PROFILE_IMG_KEY).then(uri => {
+        if (uri && uri !== profileUri) setProfileUri(uri);
+      }).catch(() => {});
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [profileUri]);
 
   if (!bootstrapped) {
     return null;
@@ -111,52 +148,178 @@ export default function AppLayout() {
   if (!hasTenant) {
     return <Redirect href="/company-code" />;
   }
-  // Defensive guard: never render the authenticated area with an unbound session.
   if (!authed) {
     return <Redirect href="/login" />;
   }
 
-  const [profileVisible, setProfileVisible] = useState(false);
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : 8;
+  const barHeight = 68 + bottomPadding;
+
+  const renderTabIcon = (iconName: string, focused: boolean) => {
+    return (
+      <MaterialCommunityIcons
+        name={iconName as any}
+        color={focused ? '#22C55E' : '#64748B'}
+        size={24}
+      />
+    );
+  };
 
   return (
-    <>
-    <Drawer
-      key={`tenant-${tenantEpoch}`}
-      drawerContent={(props) => <AppDrawerContent {...props} />}
-      screenOptions={{
-        headerStyle: { backgroundColor: c.primary },
-        headerTintColor: '#FFFFFF',
-        headerTitleStyle: { fontWeight: '800' },
-        headerShadowVisible: false,
-        drawerActiveTintColor: c.primary,
-        drawerInactiveTintColor: c.textSecondary,
-        // The panel fills the full screen height and clips its children, so the
-        // drawer content reaches the bottom edge cleanly. The rounded right edge
-        // is applied here (with overflow hidden) rather than on the header or the
-        // footer, so no child can leave an uneven notch in the silhouette.
-        drawerStyle: {
-          backgroundColor: c.surface,
-          borderBottomRightRadius: radius.lg,
-          borderTopRightRadius: radius.lg,
-          overflow: 'hidden',
-          width: 300,
-        },
-        headerTitleAlign: 'center',
-        headerLeft: () => <DrawerToggleButton tintColor="#FFFFFF" />,
-        headerRight: () => <HeaderRight onProfilePress={() => setProfileVisible(true)} />,
-      }}>
-      <Drawer.Screen name="map" options={{ headerShown: false }} />
-      <Drawer.Screen name="ai-chat" options={{ title: 'AI Assistant', headerTitle: 'AI Assistant' }} />
-      <Drawer.Screen name="vehicles" options={{ title: 'All Vehicles', headerTitle: 'All Vehicles' }} />
-      <Drawer.Screen name="geofences" options={{ title: 'Geofences', headerTitle: 'Geofences' }} />
-      <Drawer.Screen name="reports" options={{ title: 'Reports', headerTitle: 'Reports' }} />
-      <Drawer.Screen name="commands" options={{ title: 'Device Commands', headerTitle: 'Device Commands' }} />
-      <Drawer.Screen name="management" options={{ title: 'Management', headerTitle: 'Management' }} />
-      <Drawer.Screen name="manage-tenants" options={{ title: 'Manage Tenants', headerTitle: 'Manage Tenants' }} />
-      <Drawer.Screen name="settings" options={{ title: 'Settings', headerTitle: 'Settings' }} />
-      <Drawer.Screen name="timeline" options={{ title: 'Timeline', headerTitle: 'Timeline' }} />
-    </Drawer>
-    <ProfilePanel visible={profileVisible} onClose={() => setProfileVisible(false)} />
-    </>
+    <View style={{ flex: 1, backgroundColor: '#22C55E' }}>
+      <Tabs
+        key={`tenant-${tenantEpoch}`}
+        screenOptions={{
+          headerStyle: {
+            borderBottomLeftRadius: 20,
+            borderBottomRightRadius: 20,
+            backgroundColor: '#22C55E',
+            elevation: 8,
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.12,
+            shadowRadius: 8,
+          },
+          headerBackground: () => (
+            <LinearGradient
+              colors={['#22C55E', '#16A34A']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{
+                ...StyleSheet.absoluteFillObject,
+                borderBottomLeftRadius: 20,
+                borderBottomRightRadius: 20,
+              }}
+            />
+          ),
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '800' },
+          headerShadowVisible: false,
+          tabBarActiveTintColor: '#22C55E',
+          tabBarInactiveTintColor: '#64748B',
+          tabBarStyle: {
+            backgroundColor: c.surface,
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            borderTopWidth: 0,
+            height: barHeight,
+            paddingBottom: bottomPadding,
+            paddingTop: 8,
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            elevation: 16,
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: -4 },
+            shadowOpacity: 0.08,
+            shadowRadius: 12,
+          },
+          tabBarLabelStyle: {
+            fontSize: 11,
+            fontWeight: '700',
+          },
+          headerTitleAlign: 'center',
+          headerLeft: () => (
+            <View style={{ paddingLeft: 16, justifyContent: 'center', alignItems: 'center' }}>
+              <Image
+                source={require('@/assets/images/glivt-wordmark-cropped.png')}
+                style={{ width: 84, height: 26 }}
+                contentFit="contain"
+              />
+            </View>
+          ),
+          headerRight: () => (
+            <HeaderRight
+              profileUri={profileUri}
+              initials={initials}
+              onPressProfile={() => setProfileVisible(true)}
+            />
+          ),
+        }}>
+        <Tabs.Screen
+          name="map"
+          options={{
+            title: 'Live Map',
+            tabBarIcon: ({ focused }) => renderTabIcon('map-marker-radius-outline', focused),
+          }}
+        />
+        <Tabs.Screen
+          name="vehicles"
+          options={{
+            title: 'Vehicles',
+            headerTitle: 'All Vehicles',
+            tabBarIcon: ({ focused }) => renderTabIcon('car', focused),
+          }}
+        />
+        <Tabs.Screen
+          name="geofences"
+          options={{
+            title: 'Geofences',
+            tabBarIcon: ({ focused }) => renderTabIcon('vector-polygon', focused),
+          }}
+        />
+        <Tabs.Screen
+          name="reports"
+          options={{
+            title: 'Reports',
+            tabBarIcon: ({ focused }) => renderTabIcon('file-chart-outline', focused),
+          }}
+        />
+        <Tabs.Screen
+          name="management"
+          options={{
+            title: 'Management',
+            tabBarIcon: ({ focused }) => renderTabIcon('shield-account-outline', focused),
+          }}
+        />
+        
+        {/* Hide other drawer routes from bottom navigation tabs */}
+        <Tabs.Screen
+          name="ai-chat"
+          options={{
+            href: null,
+            title: 'AI Command Centre',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+        <Tabs.Screen
+          name="commands"
+          options={{
+            href: null,
+            title: 'Commands',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+        <Tabs.Screen
+          name="manage-tenants"
+          options={{
+            href: null,
+            title: 'Manage Tenants',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+        <Tabs.Screen
+          name="settings"
+          options={{
+            href: null,
+            title: 'Settings',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+        <Tabs.Screen
+          name="timeline"
+          options={{
+            href: null,
+            title: 'Your Timeline',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+      </Tabs>
+
+      {profileVisible && (
+        <ProfilePanel visible={profileVisible} onClose={() => setProfileVisible(false)} />
+      )}
+    </View>
   );
 }

@@ -217,7 +217,14 @@ const makeStyles = (c: ThemeColors) =>
     generator: { gap: spacing.md },
     title: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
     subtitle: { color: c.textSecondary, fontSize: typography.caption, lineHeight: 17 },
-    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    chips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: c.divider,
+      paddingBottom: 4,
+    },
     reportCard: {
       alignItems: 'center',
       backgroundColor: c.surface,

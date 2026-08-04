@@ -306,6 +306,8 @@ export type SettingsDto = {
   autoFollowVehicle: boolean;
   refreshFrequencySeconds: number;
   privacyOptions?: string | null;
+  themeMode?: 'light' | 'dark' | 'system';
+  themeColor?: string | null;
   updatedAt?: string | null;
 };
 

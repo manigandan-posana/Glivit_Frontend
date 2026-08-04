@@ -143,7 +143,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
             )}
 
             <View style={styles.actions}>
-              <Button label="Cancel" onPress={() => setModalVisible(false)} style={styles.cancelBtn} labelStyle={styles.cancelBtnText} />
+              <Button label="Cancel" onPress={() => setModalVisible(false)} variant="secondary" style={{ flex: 1 }} />
               <Button label="Apply" onPress={applyCustom} style={styles.applyBtn} />
             </View>
           </View>
@@ -171,7 +171,7 @@ const makeStyles = (c: ThemeColors) =>
     chip: {
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
-      borderRadius: radius.full,
+      borderRadius: radius.pill,
       backgroundColor: c.surfaceAlt,
       borderWidth: 1,
       borderColor: c.border,
@@ -211,7 +211,7 @@ const makeStyles = (c: ThemeColors) =>
       maxWidth: 400,
     },
     modalTitle: {
-      fontSize: typography.h3,
+      fontSize: typography.title,
       fontWeight: '800',
       color: c.textPrimary,
       marginBottom: spacing.lg,

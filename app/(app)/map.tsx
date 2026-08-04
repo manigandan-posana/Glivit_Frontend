@@ -20,7 +20,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Fleet3DOverlay, type Fleet3DOverlayMarker } from '@/src/components/Fleet3DOverlay';
 import { FleetWebMap, type FleetWebMapHandle, type WebMapMarker } from '@/src/components/FleetWebMap';
 import MapView, { Marker } from '@/src/components/maps/NativeMap';
-import { NotificationCenter } from '@/src/components/NotificationCenter';
 import {
   getVehicleModel,
   modelForVehicle,
@@ -40,6 +39,7 @@ import { normalizeHeading } from '@/src/services/vehicleMarkerAssets';
 import type { DeviceSummary } from '@/src/types/api';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
+import { useAppSelector } from '@/src/store/hooks';
 
 /** Shortest-path angular interpolation for smooth live heading changes. */
 function lerpAngle(a: number, b: number, t: number): number {
@@ -52,11 +52,16 @@ export default function AllVehiclesMapScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { colors: c, stateColors, isDark } = useTheme();
+  const { colors: c, stateColors, isDark, autoFollowVehicle } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
   const mapRef = useRef<MapView>(null);
   const webMapRef = useRef<FleetWebMapHandle>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  const autoFollowVehicleRef = useRef(autoFollowVehicle);
+  useEffect(() => {
+    autoFollowVehicleRef.current = autoFollowVehicle;
+  }, [autoFollowVehicle]);
 
   const { data, isFetching, refetch } = useGetAllDevicesQuery();
   const listQuery = useGetDevicesQuery({ page: 0, size: 100 });
@@ -118,11 +123,11 @@ export default function AllVehiclesMapScreen() {
           r.heading = t.heading;
         }
       });
-      // Publish on a throttle, and pause publishing while a vehicle is focused
-      // (its detail sheet is open and the camera is centred on it) so the sheet
-      // does not re-render on every tick. Interpolation keeps running, so markers
-      // catch up smoothly once the selection is cleared.
-      if (selectedIdRef.current == null && now - lastPublishRef.current >= 120) {
+      // Publish on a throttle. If a vehicle is selected, we only publish updates at a slower rate
+      // (every 1200ms) to prevent detail sheet re-renders, and ONLY if auto-follow is enabled.
+      const shouldPublish = selectedIdRef.current == null || autoFollowVehicleRef.current;
+      const throttleInterval = selectedIdRef.current == null ? 120 : 1200;
+      if (shouldPublish && now - lastPublishRef.current >= throttleInterval) {
         lastPublishRef.current = now;
         const next: Record<number, AnimatedPos> = {};
         render.forEach((r, id) => {
@@ -173,6 +178,20 @@ export default function AllVehiclesMapScreen() {
     }
   }, [located, selectedId]);
 
+  const selectedLive = useMemo(
+    () => liveDevices.find((d) => d.id === selectedId) ?? null,
+    [liveDevices, selectedId]
+  );
+
+  useEffect(() => {
+    if (autoFollowVehicle && selectedLive && mapRef.current) {
+      mapRef.current.animateCamera({
+        center: { latitude: selectedLive.latitude, longitude: selectedLive.longitude },
+        zoom: 15.2,
+      }, { duration: 800 });
+    }
+  }, [selectedLive?.latitude, selectedLive?.longitude, autoFollowVehicle]);
+
   const webMarkers = useMemo<WebMapMarker[]>(
     () =>
       liveDevices.map((d) => ({
@@ -188,6 +207,27 @@ export default function AllVehiclesMapScreen() {
   );
 
   const [showLayersSheet, setShowLayersSheet] = useState(false);
+  const [legendExpanded, setLegendExpanded] = useState(false);
+  const legendAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(legendAnim, {
+      toValue: legendExpanded ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [legendExpanded, legendAnim]);
+
+  const translateY = legendAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [200, 0],
+  });
+
+  const opacity = legendAnim.interpolate({
+    inputRange: [0, 0.1, 1],
+    outputRange: [0, 0.9, 1],
+  });
+
   const [mapPreferences, setMapPreferences] = useState<MapPreferences>(DEFAULT_MAP_PREFERENCES);
 
   useEffect(() => {
@@ -324,22 +364,18 @@ export default function AllVehiclesMapScreen() {
 
       <View pointerEvents="none" style={styles.mapVignette} />
 
-      <View style={[styles.commandBar, { top: insets.top + spacing.sm }]}>
-        <NotificationCenter tint="#EAF3FB" />
-        <View style={styles.commandTitle}>
-          <View style={styles.eyebrowRow}>
-            <View style={[styles.signalDot, { backgroundColor: connected ? c.primary : c.textMuted }]} />
-            <Text style={styles.eyebrow}>{connected ? 'LIVE FLEET' : 'CONNECTING'}</Text>
-          </View>
-          <Text style={styles.commandHeading}>All vehicles · {located.length}</Text>
-        </View>
-        <FloatingButton icon="menu" onPress={() => navigation.dispatch(DrawerActions.openDrawer())} />
-      </View>
-      <View style={[styles.railRight, { top: insets.top + (Platform.OS === 'ios' ? 80 : 76) }]}>
+      <View style={[styles.railRight, { top: spacing.md }]}>
         <LabeledFloatingButton icon="refresh" label="Refresh" loading={isFetching || listQuery.isFetching || manualRefreshing} onPress={handleRefresh} />
         <LabeledFloatingButton icon="crosshairs-gps" label="Locate Me" onPress={locateMe} />
         <LabeledFloatingButton icon="layers-outline" label="Layers" onPress={toggleLayers} />
         <LabeledFloatingButton icon="fit-to-page-outline" label="Fit All" onPress={fitAll} />
+        {located.length > 0 && !selected && (
+          <LabeledFloatingButton
+            icon={legendExpanded ? 'chevron-down' : 'chevron-up'}
+            label="Status"
+            onPress={() => setLegendExpanded((prev) => !prev)}
+          />
+        )}
       </View>
 
       {located.length === 0 && !isFetching && !listQuery.isFetching ? (
@@ -356,42 +392,55 @@ export default function AllVehiclesMapScreen() {
 
       {selected ? (
         <VehicleDetailsBottomSheet
-          bottomInset={insets.bottom}
+          bottomInset={68 + (insets.bottom > 0 ? insets.bottom : 8) + 16}
           device={selected}
           onOpenLiveTrack={() => openLiveTrack(selected)}
           onOpenPlayback={() => openPlayback(selected)}
         />
       ) : located.length > 0 ? (
-        <View style={[styles.legend, { paddingBottom: insets.bottom + spacing.sm }]} pointerEvents="none">
-          <LegendChip
-            badgeColor="#22C55E"
-            icon="truck"
-            label="Running"
-            labelColor="#22C55E"
-            value={statusCounts.RUNNING}
-          />
-          <LegendChip
-            badgeColor="#F59E0B"
-            icon="pause"
-            label="Idle"
-            labelColor="#94A3B8"
-            value={statusCounts.IDLE}
-          />
-          <LegendChip
-            badgeColor="#EF4444"
-            icon="stop"
-            label="Stopped"
-            labelColor="#EF4444"
-            value={statusCounts.STOPPED}
-          />
-          <LegendChip
-            badgeColor="#475569"
-            icon="wifi-off"
-            label="Offline"
-            labelColor="#94A3B8"
-            value={statusCounts.NO_DATA}
-          />
-        </View>
+        <>
+
+          <Animated.View
+            style={[
+              styles.legend,
+              {
+                bottom: 68 + (insets.bottom > 0 ? insets.bottom : 8) + 16,
+                transform: [{ translateY }],
+                opacity,
+              },
+            ]}
+            pointerEvents={legendExpanded ? 'auto' : 'none'}
+          >
+            <LegendChip
+              badgeColor="#22C55E"
+              icon="truck"
+              label="Running"
+              labelColor="#22C55E"
+              value={statusCounts.RUNNING}
+            />
+            <LegendChip
+              badgeColor="#F59E0B"
+              icon="pause"
+              label="Idle"
+              labelColor="#94A3B8"
+              value={statusCounts.IDLE}
+            />
+            <LegendChip
+              badgeColor="#EF4444"
+              icon="stop"
+              label="Stopped"
+              labelColor="#EF4444"
+              value={statusCounts.STOPPED}
+            />
+            <LegendChip
+              badgeColor="#475569"
+              icon="wifi-off"
+              label="Offline"
+              labelColor="#94A3B8"
+              value={statusCounts.NO_DATA}
+            />
+          </Animated.View>
+        </>
       ) : null}
 
       <MapLayersBottomSheet
@@ -940,7 +989,13 @@ function NativeFleetMap({
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         customMapStyle={mapStyle}
-        mapType={mapPreferences.mapType === 'satellite' ? 'hybrid' : mapPreferences.mapType}
+        mapType={
+          Platform.OS === 'ios' && mapPreferences.mapType === 'terrain'
+            ? 'standard'
+            : mapPreferences.mapType === 'satellite'
+              ? 'hybrid'
+              : mapPreferences.mapType
+        }
         showsTraffic={mapPreferences.details.traffic}
         loadingBackgroundColor="#E8EDF2"
         loadingEnabled
@@ -1165,7 +1220,7 @@ function FloatingButton({
   const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <Pressable accessibilityRole="button" disabled={loading} onPress={onPress} style={styles.fab}>
-      <MaterialCommunityIcons color="#FFFFFF" name={loading ? 'timer-sand' : icon} size={22} />
+      <MaterialCommunityIcons color={c.textPrimary} name={loading ? 'timer-sand' : icon} size={22} />
     </Pressable>
   );
 }
@@ -1215,7 +1270,7 @@ function LabeledFloatingButton({
         onPress={onPress}
         style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}>
         <Animated.View style={{ transform: [{ rotate: spin }] }}>
-          <MaterialCommunityIcons color="#FFFFFF" name={icon} size={22} />
+          <MaterialCommunityIcons color={c.textPrimary} name={icon} size={22} />
         </Animated.View>
       </Pressable>
       {label ? (
@@ -1224,7 +1279,7 @@ function LabeledFloatingButton({
           style={[
             styles.fabLabelText,
             {
-              color: isDark ? '#E2E8F0' : '#1E293B',
+              color: c.textPrimary,
               textShadowColor: isDark ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.95)',
             },
           ]}>
@@ -1278,8 +1333,8 @@ const makeStyles = (c: ThemeColors) =>
     },
     legend: {
       alignItems: 'center',
-      backgroundColor: 'rgba(55, 65, 81, 0.95)',
-      borderColor: 'rgba(255, 255, 255, 0.18)',
+      backgroundColor: c.cardBackground,
+      borderColor: c.border,
       borderRadius: radius.xl,
       borderWidth: 1,
       bottom: spacing.sm,
@@ -1291,7 +1346,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingVertical: spacing.md,
       position: 'absolute',
       right: spacing.sm,
-      shadowColor: '#020712',
+      shadowColor: c.shadowColor,
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.28,
       shadowRadius: 18,
@@ -1305,55 +1360,100 @@ const makeStyles = (c: ThemeColors) =>
       justifyContent: 'center',
       width: 24,
     },
-    legendValue: { color: '#FFFFFF', fontSize: 16, fontWeight: '900' },
-    legendLabel: { color: '#94A3B8', fontSize: 11, fontWeight: '700', textAlign: 'center' },
+    legendValue: { color: c.textPrimary, fontSize: 16, fontWeight: '900' },
+    legendLabel: { color: c.textSecondary, fontSize: 11, fontWeight: '700', textAlign: 'center' },
     mapVignette: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: 'rgba(6, 13, 24, 0.035)',
       borderColor: 'rgba(4, 10, 20, 0.12)',
       borderWidth: 1,
     },
-    commandBar: {
+    floatingHeader: {
       alignItems: 'center',
-      backgroundColor: 'rgba(55, 65, 81, 0.95)',
-      borderColor: 'rgba(255,255,255,0.18)',
-      borderRadius: radius.lg,
+      backgroundColor: c.cardBackground,
+      borderColor: c.border,
+      borderRadius: 24,
       borderWidth: 1,
       flexDirection: 'row',
-      gap: spacing.sm,
       left: spacing.md,
-      padding: spacing.sm,
+      paddingHorizontal: spacing.md,
+      height: 72,
       position: 'absolute',
       right: spacing.md,
-      shadowColor: '#020712',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.28,
-      shadowRadius: 22,
+      shadowColor: c.shadowColor,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.22,
+      shadowRadius: 12,
+      elevation: 8,
+      zIndex: 50,
+    },
+    headerLeftCol: {
+      marginRight: spacing.sm,
+    },
+    headerMidCol: {
+      flex: 1,
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: 2,
+    },
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    statusLabel: {
+      color: c.textSecondary,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.2,
+    },
+    headerTitle: {
+      color: c.textPrimary,
+      fontSize: 16,
+      fontWeight: '800',
+    },
+    rightActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    menuButton: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: c.border,
     },
     commandTitle: { flex: 1, minWidth: 0 },
     eyebrowRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
     signalDot: { borderRadius: 4, height: 7, width: 7 },
-    eyebrow: { color: '#E2E8F0', fontSize: 9, fontWeight: '900', letterSpacing: 1.5 },
-    commandHeading: { color: '#FFFFFF', fontSize: 17, fontWeight: '900', marginTop: 1 },
+    eyebrow: { color: c.textSecondary, fontSize: 9, fontWeight: '900', letterSpacing: 1.5 },
+    commandHeading: { color: c.textPrimary, fontSize: 17, fontWeight: '900', marginTop: 1 },
     fleetCount: {
       alignItems: 'flex-end',
-      borderLeftColor: 'rgba(255,255,255,0.12)',
+      borderLeftColor: c.divider,
       borderLeftWidth: 1,
       minWidth: 58,
       paddingHorizontal: 8,
     },
-    fleetCountValue: { color: '#FFFFFF', fontSize: 20, fontWeight: '900' },
-    fleetCountLabel: { color: '#E2E8F0', fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+    fleetCountValue: { color: c.textPrimary, fontSize: 20, fontWeight: '900' },
+    fleetCountLabel: { color: c.textSecondary, fontSize: 8, fontWeight: '900', letterSpacing: 1 },
     fab: {
       alignItems: 'center',
-      backgroundColor: 'rgba(55, 65, 81, 0.95)',
-      borderColor: 'rgba(255,255,255,0.18)',
+      backgroundColor: c.cardBackground,
+      borderColor: c.border,
       borderRadius: 16,
       borderWidth: 1,
       elevation: 4,
       height: 48,
       justifyContent: 'center',
-      shadowColor: '#020712',
+      shadowColor: c.shadowColor,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.22,
       shadowRadius: 6,
@@ -1361,8 +1461,8 @@ const makeStyles = (c: ThemeColors) =>
     },
     emptyOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
     vehicleSheet: {
-      backgroundColor: 'rgba(55, 65, 81, 0.96)',
-      borderColor: 'rgba(255,255,255,0.18)',
+      backgroundColor: c.cardBackground,
+      borderColor: c.border,
       borderRadius: radius.xl,
       borderWidth: 1,
       elevation: 12,
@@ -1373,7 +1473,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingTop: 8,
       position: 'absolute',
       right: spacing.md,
-      shadowColor: '#020712',
+      shadowColor: c.shadowColor,
       shadowOffset: { width: 0, height: -8 },
       shadowOpacity: 0.38,
       shadowRadius: 26,
@@ -1386,7 +1486,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingTop: 2,
     },
     sheetHandle: {
-      backgroundColor: 'rgba(190, 210, 228, 0.42)',
+      backgroundColor: c.divider,
       borderRadius: 3,
       height: 5,
       width: 48,
@@ -1397,7 +1497,7 @@ const makeStyles = (c: ThemeColors) =>
       zIndex: 50,
     },
     sheetDivider: {
-      backgroundColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: c.divider,
       height: 1,
       marginTop: 13,
     },
@@ -1409,15 +1509,15 @@ const makeStyles = (c: ThemeColors) =>
       marginTop: 11,
     },
     lastUpdate: {
-      color: '#7890A6',
+      color: c.textSecondary,
       flex: 1,
       fontSize: 10,
       fontWeight: '700',
       textAlign: 'right',
     },
     detailGrid: {
-      backgroundColor: 'rgba(255,255,255,0.035)',
-      borderColor: 'rgba(255,255,255,0.08)',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
       borderRadius: 13,
       borderWidth: 1,
       flexDirection: 'row',
@@ -1435,21 +1535,21 @@ const makeStyles = (c: ThemeColors) =>
       marginTop: 11,
     },
     coordinateLabel: {
-      color: '#6F879D',
+      color: c.textSecondary,
       fontSize: 8,
       fontWeight: '900',
       letterSpacing: 0.9,
     },
-    coordinateValue: { color: '#C9D8E4', fontSize: 10, fontWeight: '800' },
+    coordinateValue: { color: c.textPrimary, fontSize: 10, fontWeight: '800' },
     cardList: { bottom: 0, left: 0, position: 'absolute', right: 0 },
     cards: { gap: spacing.sm, paddingHorizontal: spacing.md },
     card: {
-      backgroundColor: 'rgba(55, 65, 81, 0.96)',
-      borderColor: 'rgba(255,255,255,0.18)',
+      backgroundColor: c.cardBackground,
+      borderColor: c.border,
       borderRadius: radius.xl,
       borderWidth: 1,
       padding: 18,
-      shadowColor: '#020712',
+      shadowColor: c.shadowColor,
       shadowOffset: { width: 0, height: 12 },
       shadowOpacity: 0.32,
       shadowRadius: 24,
@@ -1458,8 +1558,8 @@ const makeStyles = (c: ThemeColors) =>
     cardIdentity: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 10, minWidth: 0 },
     cardBeacon: {
       alignItems: 'center',
-      backgroundColor: 'rgba(255,255,255,0.045)',
-      borderColor: 'rgba(83,216,255,0.14)',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
       borderRadius: 15,
       borderWidth: 1,
       height: 70,
@@ -1468,14 +1568,14 @@ const makeStyles = (c: ThemeColors) =>
       width: 80,
     },
     cardTitleBlock: { flex: 1, minWidth: 0 },
-    cardName: { color: '#F3F8FD', fontSize: typography.body, fontWeight: '900' },
-    cardId: { color: '#7890A6', fontSize: 9, fontWeight: '800', letterSpacing: 1, marginTop: 2 },
+    cardName: { color: c.textPrimary, fontSize: typography.body, fontWeight: '900' },
+    cardId: { color: c.textSecondary, fontSize: 9, fontWeight: '800', letterSpacing: 1, marginTop: 2 },
     addressRow: { alignItems: 'center', flexDirection: 'row', gap: 6, marginTop: 12 },
-    cardAddress: { color: '#9BB0C3', flex: 1, fontSize: typography.caption },
+    cardAddress: { color: c.textSecondary, flex: 1, fontSize: typography.caption },
     cardMetaRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between', marginTop: 14 },
     speedReadout: { alignItems: 'baseline', flexDirection: 'row', gap: 5 },
-    speedNumber: { color: '#F4FAFF', fontSize: 28, fontWeight: '900' },
-    speedUnit: { color: '#7590A7', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+    speedNumber: { color: c.textPrimary, fontSize: 28, fontWeight: '900' },
+    speedUnit: { color: c.textSecondary, fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
     cardActions: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -1485,8 +1585,8 @@ const makeStyles = (c: ThemeColors) =>
     },
     cardPlay: {
       alignItems: 'center',
-      backgroundColor: 'rgba(255,255,255,0.08)',
-      borderColor: 'rgba(255,255,255,0.12)',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
       borderWidth: 1,
       borderRadius: radius.pill,
       flexDirection: 'row',
@@ -1494,7 +1594,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingHorizontal: 10,
       paddingVertical: 8,
     },
-    cardPlayText: { color: '#E9F2FA', fontSize: typography.caption, fontWeight: '800' },
+    cardPlayText: { color: c.textPrimary, fontSize: typography.caption, fontWeight: '800' },
     trackButton: {
       alignItems: 'center',
       backgroundColor: c.primary,

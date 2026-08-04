@@ -201,6 +201,22 @@ export const operationsApi = baseApi.injectEndpoints({
       transformResponse: (response: ApiResponse<SettingsDto>) => unwrap(response),
       invalidatesTags: ['Settings', 'Audit'],
     }),
+    updateProfileImage: build.mutation<void, string>({
+      query: (base64Image) => ({
+        url: '/users/me/profile-image',
+        method: 'PUT',
+        body: base64Image,
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+      }),
+      invalidatesTags: ['User'],
+    }),
+    getProfileImage: build.query<string, void>({
+      query: () => ({ url: '/users/me/profile-image' }),
+      transformResponse: (response: ApiResponse<string>) => unwrap(response),
+      providesTags: ['User'],
+    }),
     getAudit: build.query<PageResponse<AuditDto>, { page?: number; size?: number }>({
       query: ({ page = 0, size = 20 }) => ({ url: '/audit', params: { page, size } }),
       transformResponse: (response: ApiResponse<PageResponse<AuditDto>>) => unwrap(response),
@@ -235,4 +251,6 @@ export const {
   useGetUsersQuery,
   useSubmitCommandMutation,
   useUpdateSettingsMutation,
+  useUpdateProfileImageMutation,
+  useGetProfileImageQuery,
 } = operationsApi;

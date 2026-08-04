@@ -37,12 +37,16 @@ import {
   useGetUsersQuery,
   useUpdateUserMutation,
 } from '@/src/services/operationsApi';
-import { useAppSelector, useHasPermission } from '@/src/store/hooks';
+import { useAppSelector, useHasPermission, useCanManageTenants } from '@/src/store/hooks';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 import type { ManagedUserDto, ProjectDto } from '@/src/types/api';
+import CommandsScreen from './commands';
+import ManageTenantsScreen from './manage-tenants';
 
-type Tab = 'devices' | 'users' | 'projects' | 'audit';
+type PrimaryTab = 'management' | 'tenants' | 'commands';
+type SubTab = 'devices' | 'users' | 'projects' | 'audit';
+type Tab = PrimaryTab | SubTab;
 type UserRole = 'ADMIN' | 'DRIVER';
 type NewUserDraft = {
   name: string;
@@ -71,17 +75,31 @@ export default function ManagementScreen() {
   const canUsers = useHasPermission(P.MANAGE_USERS);
   const canProjects = useHasPermission(P.MANAGE_PROJECTS);
   const canAudit = useHasPermission(P.VIEW_AUDIT_LOGS);
-  const availableTabs = useMemo(
+  const canCommands = useHasPermission(P.SEND_COMMANDS);
+  const canManageTenants = useCanManageTenants();
+  const canManagement = canDevices || canUsers || canProjects || canAudit;
+  const availablePrimaryTabs = useMemo(
+    () =>
+      [
+        canManagement && 'management',
+        canManageTenants && 'tenants',
+        canCommands && 'commands',
+      ].filter(Boolean) as PrimaryTab[],
+    [canManagement, canManageTenants, canCommands]
+  );
+  const [primaryTab, setPrimaryTab] = useState<PrimaryTab>(availablePrimaryTabs[0] ?? 'management');
+
+  const availableSubTabs = useMemo(
     () =>
       [
         canDevices && 'devices',
         canUsers && 'users',
         canProjects && 'projects',
         canAudit && 'audit',
-      ].filter(Boolean) as Tab[],
-    [canAudit, canDevices, canProjects, canUsers]
+      ].filter(Boolean) as SubTab[],
+    [canDevices, canUsers, canProjects, canAudit]
   );
-  const [tab, setTab] = useState<Tab>(availableTabs[0] ?? 'devices');
+  const [subTab, setSubTab] = useState<SubTab>(availableSubTabs[0] ?? 'devices');
 
   // Device creation / edit modal state
   const [deviceModalVisible, setDeviceModalVisible] = useState(false);
@@ -291,26 +309,54 @@ export default function ManagementScreen() {
     }
   };
 
-  if (availableTabs.length === 0) {
+  if (availablePrimaryTabs.length === 0) {
     return <EmptyLine text="No management modules are available for this account." />;
   }
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xl }]}
-        refreshControl={
-          <RefreshControl onRefresh={refreshAll} refreshing={Boolean(refreshing)} tintColor={c.primary} />
-        }
-        style={styles.screen}>
-        <View style={styles.tabRow}>
-          {availableTabs.map((value) => (
-            <Chip key={value} active={tab === value} label={label(value)} onPress={() => setTab(value)} />
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={[styles.tabRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.sm }]}
+        style={styles.tabRowScrollView}>
+        {availablePrimaryTabs.map((value) => (
+          <Chip
+            key={value}
+            active={primaryTab === value}
+            label={value === 'management' ? 'Management' : value === 'tenants' ? 'Manage Tenants' : 'Device Commands'}
+            onPress={() => setPrimaryTab(value)}
+          />
+        ))}
+      </ScrollView>
+
+      {primaryTab === 'management' && availableSubTabs.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.subTabRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.xs }]}
+          style={styles.subTabRowScrollView}>
+          {availableSubTabs.map((value) => (
+            <Chip
+              key={value}
+              active={subTab === value}
+              label={value === 'devices' ? 'Devices' : value === 'users' ? 'Users' : value === 'projects' ? 'Projects' : 'Audit'}
+              onPress={() => setSubTab(value)}
+            />
           ))}
-        </View>
+        </ScrollView>
+      ) : null}
+
+      {primaryTab === 'management' && ['devices', 'users', 'projects', 'audit'].includes(subTab) ? (
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xl }]}
+          refreshControl={
+            <RefreshControl onRefresh={refreshAll} refreshing={Boolean(refreshing)} tintColor={c.primary} />
+          }
+          style={styles.screen}>
 
         {/* Devices Tab */}
-        {tab === 'devices' && canDevices ? (
+        {subTab === 'devices' && canDevices ? (
           <Card style={styles.form}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Devices</Text>
@@ -486,7 +532,7 @@ export default function ManagementScreen() {
         ) : null}
 
         {/* Users Tab */}
-        {tab === 'users' && canUsers ? (
+        {subTab === 'users' && canUsers ? (
           <Card style={styles.form}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Users & Drivers</Text>
@@ -603,7 +649,7 @@ export default function ManagementScreen() {
           </Card>
         ) : null}
 
-        {tab === 'projects' && canProjects ? (
+        {subTab === 'projects' && canProjects ? (
           <Card style={styles.form}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Projects</Text>
@@ -701,7 +747,7 @@ export default function ManagementScreen() {
           </Card>
         ) : null}
 
-        {tab === 'audit' && canAudit ? (
+        {subTab === 'audit' && canAudit ? (
           <Card style={styles.form}>
             <Text style={styles.title}>Audit Logs</Text>
             <ListState
@@ -725,9 +771,20 @@ export default function ManagementScreen() {
           </Card>
         ) : null}
       </ScrollView>
+      ) : null}
+
+      {/* Device Commands Tab */}
+      {primaryTab === 'commands' && canCommands ? (
+        <CommandsScreen />
+      ) : null}
+
+      {/* Manage Tenants Tab */}
+      {primaryTab === 'tenants' && canManageTenants ? (
+        <ManageTenantsScreen />
+      ) : null}
 
       {/* Device Modal for Create & Edit */}
-      {tab === 'devices' && canDevices ? (
+      {primaryTab === 'management' && subTab === 'devices' && canDevices ? (
         <Modal
           animationType="slide"
           hardwareAccelerated
@@ -790,7 +847,7 @@ export default function ManagementScreen() {
       ) : null}
 
       {/* User Creation Modal */}
-      {tab === 'users' && canUsers ? (
+      {primaryTab === 'management' && subTab === 'users' && canUsers ? (
         <Modal
           animationType="slide"
           hardwareAccelerated
@@ -992,7 +1049,7 @@ export default function ManagementScreen() {
       ) : null}
 
       {/* Project Creation & Edit Modal */}
-      {tab === 'projects' && canProjects ? (
+      {primaryTab === 'management' && subTab === 'projects' && canProjects ? (
         <Modal
           animationType="slide"
           hardwareAccelerated
@@ -1148,6 +1205,8 @@ function Section({
 }
 
 function label(tab: Tab) {
+  if (tab === 'commands') return 'Device Commands';
+  if (tab === 'tenants') return 'Manage Tenants';
   return tab.charAt(0).toUpperCase() + tab.slice(1);
 }
 
@@ -1160,7 +1219,22 @@ const makeStyles = (c: ThemeColors) =>
       gap: spacing.md,
       padding: spacing.md,
     },
-    tabRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    tabRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+    tabRowScrollView: {
+      flexGrow: 0,
+      maxHeight: 64,
+    },
+    subTabRow: {
+      flexDirection: 'row',
+      gap: spacing.xs,
+      alignItems: 'center',
+    },
+    subTabRowScrollView: {
+      flexGrow: 0,
+      maxHeight: 52,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.border,
+    },
     roleFilterRow: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.xs },
     form: { gap: spacing.md },
     titleRow: {
