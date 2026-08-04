@@ -72,7 +72,7 @@ export default function TimelineAnalyticsScreen() {
         topLabelComponent: () => (
           <Text style={styles.barTopLabel}>{distance}</Text>
         ),
-        frontColor: c.primary,
+        frontColor: c.primaryGreen,
         dateStr: currentDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
         trips: Math.floor(Math.random() * 3) + 2,
       });

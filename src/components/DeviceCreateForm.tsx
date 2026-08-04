@@ -23,7 +23,6 @@ type Draft = {
   driverName: string;
   driverPhone: string;
   projectId?: number;
-  groupId?: number;
   expiryDate: string;
   timezone: string;
   distanceUnit: 'KM' | 'MI';
@@ -57,7 +56,6 @@ function emptyDraft(initialDevice?: any): Draft {
       driverName: initialDevice.driverName || '',
       driverPhone: initialDevice.driverPhone || '',
       expiryDate: initialDevice.expiryDate ? String(initialDevice.expiryDate).slice(0, 10) : oneYearFromNow(),
-      groupId: initialDevice.groupId ?? undefined,
       imei: initialDevice.imei || '',
       model: initialDevice.model || '',
       name: initialDevice.name || '',
@@ -77,7 +75,6 @@ function emptyDraft(initialDevice?: any): Draft {
     driverName: '',
     driverPhone: '',
     expiryDate: oneYearFromNow(),
-    groupId: undefined,
     imei: '',
     model: '',
     name: '',
@@ -167,7 +164,6 @@ export function DeviceCreateForm({ initialDevice, onSuccess, onCancel }: DeviceC
       driverName: trimmed(draft.driverName),
       driverPhone: trimmed(draft.driverPhone),
       expiryDate: trimmed(draft.expiryDate),
-      groupId: draft.groupId,
       imei: draft.imei.replace(/\D/g, ''),
       model: trimmed(draft.model),
       name: draft.name.trim(),
@@ -356,13 +352,6 @@ export function DeviceCreateForm({ initialDevice, onSuccess, onCancel }: DeviceC
               options={projectOptions}
               placeholder="Select project..."
               selectedId={draft.projectId}
-            />
-            <FieldLabel>Group</FieldLabel>
-            <OptionRow
-              emptyText="No groups yet"
-              onSelect={(id) => set('groupId', id)}
-              options={(groups.data ?? []).map((group) => ({ id: group.id, label: group.name }))}
-              selectedId={draft.groupId}
             />
           </FormSection>
 

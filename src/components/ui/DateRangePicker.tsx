@@ -172,21 +172,21 @@ const makeStyles = (c: ThemeColors) =>
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
       borderRadius: radius.pill,
-      backgroundColor: c.surfaceAlt,
+      backgroundColor: c.accentSoft,
       borderWidth: 1,
-      borderColor: c.border,
+      borderColor: 'transparent',
     },
     chipActive: {
-      backgroundColor: c.primary,
-      borderColor: c.primary,
+      backgroundColor: c.primaryGreen,
+      borderColor: c.primaryGreen,
     },
     chipText: {
       fontSize: typography.caption,
       fontWeight: '600',
-      color: c.textSecondary,
+      color: c.primaryGreen,
     },
     chipTextActive: {
-      color: '#FFF',
+      color: c.white,
     },
     dateDisplay: {
       marginTop: spacing.xs,

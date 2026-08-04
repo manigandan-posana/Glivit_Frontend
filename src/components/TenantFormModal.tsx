@@ -243,7 +243,7 @@ export function TenantFormModal({
             hitSlop={12}
             onPress={onClose}
             style={styles.headerButton}>
-            <MaterialCommunityIcons color="#FFFFFF" name="close" size={24} />
+            <MaterialCommunityIcons color={c.onPrimary} name="close" size={24} />
           </Pressable>
           <Text numberOfLines={1} style={styles.headerTitle}>
             {mode === 'create' ? 'Create Tenant' : 'Edit Tenant'}
@@ -368,7 +368,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingTop: spacing.xxl,
     },
     headerButton: { padding: spacing.xs },
-    headerTitle: { color: '#FFFFFF', flex: 1, fontSize: typography.h2, fontWeight: '800' },
+    headerTitle: { color: c.onPrimary, flex: 1, fontSize: typography.h2, fontWeight: '800' },
     content: {
       gap: spacing.md,
       padding: spacing.md,

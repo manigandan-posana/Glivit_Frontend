@@ -490,7 +490,7 @@ const makeStyles = (c: ThemeColors) =>
       letterSpacing: 1.2,
     },
     appName: {
-      color: '#FFFFFF',
+      color: c.white,
       fontSize: 31,
       fontWeight: '900',
       letterSpacing: -0.6,
@@ -610,7 +610,7 @@ const makeStyles = (c: ThemeColors) =>
       width: 38,
     },
     contactCopy: { flex: 1 },
-    contactText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+    contactText: { color: c.white, fontSize: 13, fontWeight: '800' },
     contactSubtext: {
       color: 'rgba(226,239,247,0.55)',
       fontSize: 10,
@@ -619,7 +619,7 @@ const makeStyles = (c: ThemeColors) =>
     clearCode: { marginTop: spacing.md, padding: spacing.sm },
     clearCodeDisabled: { opacity: 0.45 },
     clearCodeText: { color: 'rgba(255,255,255,0.64)', fontSize: typography.caption },
-    clearCodeStrong: { color: '#FFFFFF', fontWeight: '800' },
+    clearCodeStrong: { color: c.white, fontWeight: '800' },
     securityNote: {
       alignItems: 'center',
       flexDirection: 'row',

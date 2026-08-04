@@ -7,6 +7,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -334,16 +335,21 @@ export default function ManagementScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[styles.subTabRow, { paddingHorizontal: spacing.md, paddingVertical: spacing.xs }]}
+          contentContainerStyle={[styles.subTabRow, { paddingHorizontal: spacing.md }]}
           style={styles.subTabRowScrollView}>
-          {availableSubTabs.map((value) => (
-            <Chip
-              key={value}
-              active={subTab === value}
-              label={value === 'devices' ? 'Devices' : value === 'users' ? 'Users' : value === 'projects' ? 'Projects' : 'Audit'}
-              onPress={() => setSubTab(value)}
-            />
-          ))}
+          {availableSubTabs.map((value) => {
+            const isActive = subTab === value;
+            return (
+              <Pressable
+                key={value}
+                onPress={() => setSubTab(value)}
+                style={[styles.subTabItem, isActive && styles.subTabItemActive]}>
+                <Text style={[styles.subTabItemText, isActive && styles.subTabItemTextActive]}>
+                  {value === 'devices' ? 'Devices' : value === 'users' ? 'Users' : value === 'projects' ? 'Projects' : 'Audit'}
+                </Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
       ) : null}
 
@@ -357,7 +363,7 @@ export default function ManagementScreen() {
 
         {/* Devices Tab */}
         {subTab === 'devices' && canDevices ? (
-          <Card style={styles.form}>
+          <Card style={[styles.form, { flex: 1 }]}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Devices</Text>
               <TouchableOpacity
@@ -533,7 +539,7 @@ export default function ManagementScreen() {
 
         {/* Users Tab */}
         {subTab === 'users' && canUsers ? (
-          <Card style={styles.form}>
+          <Card style={[styles.form, { flex: 1 }]}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Users & Drivers</Text>
               <TouchableOpacity
@@ -650,7 +656,7 @@ export default function ManagementScreen() {
         ) : null}
 
         {subTab === 'projects' && canProjects ? (
-          <Card style={styles.form}>
+          <Card style={[styles.form, { flex: 1 }]}>
             <View style={styles.titleRow}>
               <Text style={styles.title}>Projects</Text>
               <TouchableOpacity
@@ -748,7 +754,7 @@ export default function ManagementScreen() {
         ) : null}
 
         {subTab === 'audit' && canAudit ? (
-          <Card style={styles.form}>
+          <Card style={[styles.form, { flex: 1 }]}>
             <Text style={styles.title}>Audit Logs</Text>
             <ListState
               emptyText="No audit entries yet."
@@ -1196,7 +1202,7 @@ function Section({
   const { colors: c } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
   return (
-    <Card style={styles.form}>
+    <Card style={[styles.form, { flex: 1 }]}>
       <Text style={styles.title}>{title}</Text>
       {children}
       <Button disabled={submitDisabled} label={buttonLabel} loading={loading} onPress={onSubmit} />
@@ -1226,14 +1232,30 @@ const makeStyles = (c: ThemeColors) =>
     },
     subTabRow: {
       flexDirection: 'row',
-      gap: spacing.xs,
-      alignItems: 'center',
+      gap: spacing.lg,
     },
     subTabRowScrollView: {
       flexGrow: 0,
-      maxHeight: 52,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: c.border,
+      borderBottomWidth: 1,
+      borderBottomColor: c.divider,
+    },
+    subTabItem: {
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.xs,
+      borderBottomWidth: 2,
+      borderBottomColor: 'transparent',
+    },
+    subTabItemActive: {
+      borderBottomColor: c.primaryGreen,
+    },
+    subTabItemText: {
+      color: c.textMuted,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    subTabItemTextActive: {
+      color: c.primaryGreen,
+      fontWeight: '700',
     },
     roleFilterRow: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.xs },
     form: { gap: spacing.md },

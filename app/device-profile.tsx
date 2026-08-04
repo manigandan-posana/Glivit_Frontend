@@ -3,6 +3,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+
+import MapView, { Marker } from '@/src/components/maps/NativeMap';
+import { Vehicle3DMarker, modelForVehicle } from '@/src/components/Vehicle3DMarker';
 
 import { Button } from '@/src/components/ui/Button';
 import { Card } from '@/src/components/ui/Card';
@@ -35,19 +39,63 @@ export default function DeviceProfileScreen() {
       contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
       style={styles.screen}>
       <View style={styles.header}>
+        {data.latitude != null && data.longitude != null && (
+          <MapView
+            style={StyleSheet.absoluteFillObject}
+            initialRegion={{
+              latitude: data.latitude,
+              longitude: data.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            }}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            pitchEnabled={false}
+            rotateEnabled={false}
+            pointerEvents="none"
+          >
+            <Marker
+              coordinate={{ latitude: data.latitude, longitude: data.longitude }}
+              anchor={{ x: 0.5, y: 0.5 }}
+              flat={false}
+            >
+              <Vehicle3DMarker
+                heading={data.course ?? 0}
+                isActive={data.state === 'RUNNING'}
+                renderMode="image"
+                showImageFallback
+                size={60}
+                speed={data.speed ?? 0}
+                variant={modelForVehicle(data.category, data.id)}
+              />
+            </Marker>
+          </MapView>
+        )}
+        <LinearGradient
+          colors={['rgba(17, 26, 38, 0.4)', 'rgba(17, 26, 38, 0.95)']}
+          style={StyleSheet.absoluteFillObject}
+        />
+        
         <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.back}>
-          <MaterialCommunityIcons color="#FFFFFF" name="arrow-left" size={24} />
+          <MaterialCommunityIcons color={c.white} name="arrow-left" size={24} />
         </Pressable>
         <Pressable accessibilityRole="button" disabled={isFetching} onPress={() => refetch()} style={styles.reload}>
           {isFetching ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
+            <ActivityIndicator color={c.white} size="small" />
           ) : (
-            <MaterialCommunityIcons color="#FFFFFF" name="refresh" size={22} />
+            <MaterialCommunityIcons color={c.white} name="refresh" size={22} />
           )}
         </Pressable>
-        <View style={styles.vehicleIcon}>
-          <MaterialCommunityIcons color="#FFFFFF" name="car-connected" size={40} />
-        </View>
+        
+        <LinearGradient
+          colors={[c.primaryGreen, c.darkGreen]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.vehicleIcon}
+        >
+          <MaterialCommunityIcons color={c.white} name="car-connected" size={40} />
+        </LinearGradient>
+        
         <Text numberOfLines={1} style={styles.name}>{data.name}</Text>
         <Text numberOfLines={1} style={styles.subtitle}>IMEI {data.imei} | {data.model ?? data.category}</Text>
         <StatusPill state={data.state} />
@@ -57,6 +105,7 @@ export default function DeviceProfileScreen() {
         <Button
           label="Live track"
           icon="crosshairs-gps"
+          variant="primary"
           onPress={() => router.push({ pathname: '/live-track', params: { deviceId: String(data.id), name: data.name, subtitle: data.address ?? '' } })}
         />
         <View style={styles.actionRow}>
@@ -89,7 +138,6 @@ export default function DeviceProfileScreen() {
         <Metric label="Driver" value={data.driverName ?? 'Unassigned'} />
         <Metric label="Phone" value={data.driverPhone ?? 'Unavailable'} />
         <Metric label="Project" value={data.projectId ? `#${data.projectId}` : 'Unassigned'} />
-        <Metric label="Group" value={data.groupId ? `#${data.groupId}` : 'Unassigned'} />
         <Metric label="Expiry" value={data.expiryDate ?? 'Unavailable'} />
       </Card>
 
@@ -130,7 +178,7 @@ const makeStyles = (c: ThemeColors) =>
     },
     header: {
       alignItems: 'center',
-      backgroundColor: '#111A26',
+      backgroundColor: c.cardBackground,
       borderRadius: radius.lg,
       gap: spacing.sm,
       minHeight: 210,
@@ -139,8 +187,8 @@ const makeStyles = (c: ThemeColors) =>
     },
     back: { alignItems: 'center', height: 42, justifyContent: 'center', left: spacing.sm, position: 'absolute', top: spacing.sm, width: 42 },
     reload: { alignItems: 'center', height: 42, justifyContent: 'center', right: spacing.sm, position: 'absolute', top: spacing.sm, width: 42 },
-    vehicleIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: 999, height: 76, justifyContent: 'center', marginTop: spacing.lg, width: 76 },
-    name: { color: '#FFFFFF', fontSize: typography.h2, fontWeight: '900', marginTop: spacing.sm },
+    vehicleIcon: { alignItems: 'center', borderRadius: 999, height: 76, justifyContent: 'center', marginTop: spacing.lg, width: 76 },
+    name: { color: c.white, fontSize: typography.h2, fontWeight: '900', marginTop: spacing.sm },
     subtitle: { color: 'rgba(255,255,255,0.78)', fontSize: typography.caption },
     actions: { gap: spacing.md },
     actionRow: { flexDirection: 'row', gap: spacing.sm },

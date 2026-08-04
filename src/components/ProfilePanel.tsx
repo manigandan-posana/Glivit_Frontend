@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -33,7 +34,7 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   const dispatch = useAppDispatch();
   const { colors: c, mode, setMode, colors, setPrimaryColor, autoFollowVehicle, setAutoFollowVehicle } = useTheme();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => makeStyles(c, insets), [c, insets]);
+  const styles = useMemo(() => makeStyles(c, insets, mode), [c, insets, mode]);
   const user = useAppSelector((s) => s.auth.user);
   
   const [logout] = useLogoutMutation();
@@ -161,7 +162,12 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
             <MaterialCommunityIcons name="close" size={24} color={c.textSecondary} />
           </Pressable>
 
-          <View style={styles.header}>
+          <LinearGradient
+            colors={[c.primaryGreen, c.darkGreen]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.header}
+          >
             <View style={styles.avatarContainer}>
               <Pressable onPress={promptImageChoice}>
                 {profileUri ? (
@@ -172,52 +178,61 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
                   </View>
                 )}
                 <View style={styles.cameraBadge}>
-                  <MaterialCommunityIcons name="camera" size={14} color="#FFF" />
+                  <MaterialCommunityIcons name="camera" size={14} color={c.primaryGreen} />
                 </View>
               </Pressable>
             </View>
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.role}>{roleLabel} • ID: {user?.id ?? 'Unknown'}</Text>
-          </View>
+          </LinearGradient>
 
           <View style={styles.menu}>
             {user?.role === 'SUPER_ADMIN' && (
               <Pressable style={styles.menuItem} onPress={() => { onClose(); router.push('/manage-tenants' as never); }}>
-                <MaterialCommunityIcons name="office-building-cog" size={24} color={c.textSecondary} />
+                <MaterialCommunityIcons name="office-building-cog" size={24} color={c.primaryGreen} />
                 <Text style={styles.menuItemText}>Switch Tenant</Text>
               </Pressable>
             )}
 
             <View style={styles.menuItem}>
-              <MaterialCommunityIcons name="theme-light-dark" size={24} color={c.textSecondary} />
+              <MaterialCommunityIcons name="theme-light-dark" size={24} color={c.primaryGreen} />
               <Text style={styles.menuItemText}>Dark Mode</Text>
               <Switch 
                 value={mode === 'dark'} 
                 onValueChange={(val) => setMode(val ? 'dark' : 'light')} 
-                trackColor={{ true: c.primary, false: c.borderStrong }} 
+                trackColor={{ true: c.primaryGreen, false: c.borderStrong }} 
+                thumbColor={c.white}
               />
             </View>
 
             <Pressable style={styles.menuItem} onPress={() => { onClose(); router.push('/timeline' as never); }}>
-              <MaterialCommunityIcons name="chart-timeline-variant" size={24} color={c.textSecondary} />
+              <MaterialCommunityIcons name="chart-timeline-variant" size={24} color={c.primaryGreen} />
               <Text style={styles.menuItemText}>Your Timeline</Text>
             </Pressable>
 
             <View style={styles.menuItem}>
-              <MaterialCommunityIcons name="navigation-variant-outline" size={24} color={c.textSecondary} />
+              <MaterialCommunityIcons name="navigation-variant-outline" size={24} color={c.primaryGreen} />
               <Text style={styles.menuItemText}>Auto Follow Vehicle</Text>
               <Switch 
                 value={autoFollowVehicle} 
                 onValueChange={setAutoFollowVehicle} 
-                trackColor={{ true: c.primary, false: c.borderStrong }} 
+                trackColor={{ true: c.primaryGreen, false: c.borderStrong }} 
+                thumbColor={c.white}
               />
             </View>
 
             <View style={styles.divider} />
 
-            <Pressable style={styles.menuItem} onPress={onLogout}>
-              <MaterialCommunityIcons name="logout" size={24} color={c.danger} />
-              <Text style={[styles.menuItemText, { color: c.danger }]}>Logout</Text>
+            <Pressable 
+              style={({ pressed }) => [styles.logoutButton, pressed && styles.logoutButtonPressed]} 
+              onPress={onLogout}
+            >
+              {({ pressed }) => (
+                <>
+                  <MaterialCommunityIcons name="logout" size={24} color={pressed ? c.white : c.primaryGreen} />
+                  <Text style={[styles.logoutText, pressed && { color: c.white }]}>Logout</Text>
+                </>
+              )}
             </Pressable>
           </View>
         </Animated.View>
@@ -240,7 +255,7 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   );
 }
 
-const makeStyles = (c: ThemeColors, insets: any) =>
+const makeStyles = (c: ThemeColors, insets: any, mode: string) =>
   StyleSheet.create({
     backdrop: {
       position: 'absolute',
@@ -263,19 +278,22 @@ const makeStyles = (c: ThemeColors, insets: any) =>
       justifyContent: 'center',
     },
     panel: {
-      backgroundColor: c.surfaceElevated,
+      backgroundColor: mode === 'dark' ? c.surfaceElevated : '#F8FAFC',
       borderTopLeftRadius: radius.xl,
       borderTopRightRadius: radius.xl,
-      paddingTop: spacing.md,
       paddingBottom: Math.max(insets.bottom, spacing.lg),
       elevation: 8,
       shadowColor: c.shadowColor,
       shadowOffset: { width: 0, height: -4 },
       shadowOpacity: 0.15,
       shadowRadius: 12,
+      overflow: 'hidden',
     },
     header: {
       alignItems: 'center',
+      paddingVertical: spacing.xl,
+      borderBottomLeftRadius: radius.xl,
+      borderBottomRightRadius: radius.xl,
       marginBottom: spacing.lg,
     },
     avatarContainer: {
@@ -286,19 +304,21 @@ const makeStyles = (c: ThemeColors, insets: any) =>
       width: 80,
       height: 80,
       borderRadius: 40,
-      borderWidth: 2,
-      borderColor: c.borderStrong,
+      borderWidth: 3,
+      borderColor: c.white,
     },
     avatarPlaceholder: {
       width: 80,
       height: 80,
       borderRadius: 40,
-      backgroundColor: c.primary,
+      backgroundColor: 'rgba(255, 255, 255, 0.2)',
       alignItems: 'center',
       justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: c.white,
     },
     avatarInitials: {
-      color: '#FFF',
+      color: c.white,
       fontSize: 28,
       fontWeight: '800',
     },
@@ -306,23 +326,26 @@ const makeStyles = (c: ThemeColors, insets: any) =>
       position: 'absolute',
       bottom: 0,
       right: 0,
-      backgroundColor: c.secondary,
+      backgroundColor: c.white,
       width: 28,
       height: 28,
       borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: c.surfaceElevated,
+      elevation: 2,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.2,
+      shadowRadius: 2,
     },
     name: {
       fontSize: typography.h2,
       fontWeight: '800',
-      color: c.textPrimary,
+      color: c.white,
     },
     role: {
       fontSize: typography.caption,
-      color: c.textSecondary,
+      color: 'rgba(255, 255, 255, 0.9)',
       marginTop: 2,
     },
     menu: {
@@ -332,18 +355,46 @@ const makeStyles = (c: ThemeColors, insets: any) =>
       flexDirection: 'row',
       alignItems: 'center',
       paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      backgroundColor: c.surface,
+      borderRadius: radius.md,
+      marginBottom: spacing.sm,
       gap: spacing.md,
+      elevation: 1,
+      shadowColor: c.shadowColor,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
     },
     menuItemText: {
       flex: 1,
       fontSize: typography.body,
-      fontWeight: '600',
+      fontWeight: '700',
       color: c.textPrimary,
     },
     divider: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: c.divider,
-      marginVertical: spacing.sm,
+      height: 0,
+      marginVertical: spacing.xs,
+    },
+    logoutButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 2,
+      borderColor: c.primaryGreen,
+      backgroundColor: 'transparent',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    logoutButtonPressed: {
+      backgroundColor: c.primaryGreen,
+    },
+    logoutText: {
+      fontSize: typography.body,
+      fontWeight: '800',
+      color: c.primaryGreen,
     },
     colorPreview: {
       width: 24,

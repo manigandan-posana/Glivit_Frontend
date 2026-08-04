@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 
 function HeaderBackButton() {
+  const { colors: c } = useTheme();
   const navigation = useNavigation();
   return (
     <Pressable
@@ -34,7 +35,7 @@ function HeaderBackButton() {
       style={{ paddingLeft: 16, paddingRight: 8 }}
       hitSlop={12}
     >
-      <MaterialCommunityIcons name="arrow-left" color="#FFFFFF" size={24} />
+      <MaterialCommunityIcons name="arrow-left" color={c.onPrimary} size={24} />
     </Pressable>
   );
 }
@@ -79,9 +80,9 @@ function HeaderReloadButton() {
         onPress={handleReload}
         style={{ paddingHorizontal: 12, opacity: reloading ? 0.75 : 1 }}>
         {reloading ? (
-          <ActivityIndicator color="#FFFFFF" size="small" />
+          <ActivityIndicator color={c.onPrimary} size="small" />
         ) : (
-          <MaterialCommunityIcons color="#FFFFFF" name="refresh" size={22} />
+          <MaterialCommunityIcons color={c.onPrimary} name="refresh" size={22} />
         )}
       </Pressable>
     </View>
@@ -99,19 +100,20 @@ function HeaderRight({
   initials: string;
   onPressProfile: () => void;
 }) {
+  const { colors: c } = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingRight: 16 }}>
-      <NotificationCenter tint="#FFFFFF" />
+      <NotificationCenter tint={c.onPrimary} />
       <Pressable onPress={onPressProfile} hitSlop={8}>
         {profileUri ? (
           <Image
             source={{ uri: profileUri }}
-            style={{ width: 30, height: 30, borderRadius: 15, borderWidth: 1.5, borderColor: '#FFFFFF' }}
+            style={{ width: 30, height: 30, borderRadius: 15, borderWidth: 1.5, borderColor: c.onPrimary }}
             contentFit="cover"
           />
         ) : (
-          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255, 255, 255, 0.25)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#FFFFFF' }}>
-            <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>{initials}</Text>
+          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255, 255, 255, 0.25)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: c.onPrimary }}>
+            <Text style={{ color: c.onPrimary, fontSize: 11, fontWeight: '800' }}>{initials}</Text>
           </View>
         )}
       </Pressable>
@@ -159,30 +161,30 @@ export default function AppLayout() {
     return (
       <MaterialCommunityIcons
         name={iconName as any}
-        color={focused ? '#22C55E' : '#64748B'}
+        color={focused ? c.primaryGreen : c.textMuted}
         size={24}
       />
     );
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#22C55E' }}>
+    <View style={{ flex: 1, backgroundColor: c.primaryGreen }}>
       <Tabs
         key={`tenant-${tenantEpoch}`}
         screenOptions={{
           headerStyle: {
             borderBottomLeftRadius: 20,
             borderBottomRightRadius: 20,
-            backgroundColor: '#22C55E',
+            backgroundColor: c.primaryGreen,
             elevation: 8,
-            shadowColor: '#000000',
+            shadowColor: c.shadowColor,
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.12,
             shadowRadius: 8,
           },
           headerBackground: () => (
             <LinearGradient
-              colors={['#22C55E', '#16A34A']}
+              colors={[c.primaryGreen, c.darkGreen]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={{
@@ -192,11 +194,11 @@ export default function AppLayout() {
               }}
             />
           ),
-          headerTintColor: '#FFFFFF',
+          headerTintColor: c.onPrimary,
           headerTitleStyle: { fontWeight: '800' },
           headerShadowVisible: false,
-          tabBarActiveTintColor: '#22C55E',
-          tabBarInactiveTintColor: '#64748B',
+          tabBarActiveTintColor: c.primaryGreen,
+          tabBarInactiveTintColor: c.textMuted,
           tabBarStyle: {
             backgroundColor: c.surface,
             borderTopLeftRadius: 24,
@@ -210,7 +212,7 @@ export default function AppLayout() {
             right: 0,
             bottom: 0,
             elevation: 16,
-            shadowColor: '#000000',
+            shadowColor: c.shadowColor,
             shadowOffset: { width: 0, height: -4 },
             shadowOpacity: 0.08,
             shadowRadius: 12,
@@ -241,6 +243,7 @@ export default function AppLayout() {
           name="map"
           options={{
             title: 'Live Map',
+            headerTransparent: true,
             tabBarIcon: ({ focused }) => renderTabIcon('map-marker-radius-outline', focused),
           }}
         />

@@ -409,7 +409,7 @@ const makeStyles = (c: ThemeColors) =>
       paddingHorizontal: 5,
       paddingVertical: 1,
     },
-    headerBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900', textAlign: 'center' },
+    headerBadgeText: { color: c.white, fontSize: 10, fontWeight: '900', textAlign: 'center' },
     panelActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.md },
     markAll: { color: c.primary, fontSize: typography.caption, fontWeight: '800' },
     closeButton: { alignItems: 'center', height: 32, justifyContent: 'center', width: 32 },

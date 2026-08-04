@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Pressable,
   StyleSheet,
@@ -56,14 +57,24 @@ export function MapLayersBottomSheet({
   const { colors: c } = useTheme();
   const styles = useMemo(() => makeStyles(c), [c]);
 
+  const [loadingType, setLoadingType] = useState<MapTypeOption | null>(null);
+
   const selectMapType = (type: MapTypeOption) => {
-    const updated: MapPreferences = {
-      ...preferences,
-      mapType: type,
-    };
-    onChangePreferences(updated);
-    void saveMapPreferences(updated);
-    onClose();
+    if (type === preferences.mapType) return;
+    setLoadingType(type);
+
+    // Simulate loading delay to allow map to process the layer switch
+    // and prevent flickering.
+    setTimeout(() => {
+      const updated: MapPreferences = {
+        ...preferences,
+        mapType: type,
+      };
+      onChangePreferences(updated);
+      void saveMapPreferences(updated);
+      setLoadingType(null);
+      setTimeout(onClose, 250);
+    }, 700);
   };
 
   const toggleDetail = (key: keyof MapDetailOptions) => {
@@ -103,10 +114,13 @@ export function MapLayersBottomSheet({
               const active = item.isMapType
                 ? preferences.mapType === item.id
                 : Boolean(preferences.details.traffic);
+              const isLoading = item.isMapType && loadingType === item.id;
+              
               return (
                 <Pressable
                   key={item.id}
                   accessibilityRole="button"
+                  disabled={loadingType !== null}
                   onPress={() => {
                     if (item.isMapType) {
                       selectMapType(item.id as MapTypeOption);
@@ -121,9 +135,13 @@ export function MapLayersBottomSheet({
                       source={MAP_PREVIEW_IMAGES[item.id]}
                       style={styles.previewImage}
                     />
-                    {active ? (
+                    {isLoading ? (
                       <View style={styles.checkBadge}>
-                        <MaterialCommunityIcons color="#22C55E" name="check-circle" size={18} />
+                        <ActivityIndicator color={c.onPrimary} size="small" style={{ padding: 2 }} />
+                      </View>
+                    ) : active ? (
+                      <View style={styles.checkBadge}>
+                        <MaterialCommunityIcons color={c.primaryGreen} name="check-circle" size={18} />
                       </View>
                     ) : null}
                   </View>
@@ -156,7 +174,7 @@ const makeStyles = (c: ThemeColors) =>
     },
     handle: {
       alignSelf: 'center',
-      backgroundColor: c.borderStrong || '#334155',
+      backgroundColor: c.borderStrong,
       borderRadius: 3,
       height: 4,
       marginBottom: spacing.xs,
@@ -177,7 +195,7 @@ const makeStyles = (c: ThemeColors) =>
     },
     closeButton: {
       alignItems: 'center',
-      backgroundColor: c.surfaceAlt || 'rgba(255, 255, 255, 0.05)',
+      backgroundColor: c.surfaceAlt,
       borderRadius: radius.pill,
       height: 32,
       justifyContent: 'center',
@@ -195,8 +213,8 @@ const makeStyles = (c: ThemeColors) =>
     },
     cardPreview: {
       alignItems: 'center',
-      backgroundColor: c.surfaceAlt || '#1E293B',
-      borderColor: c.border || '#334155',
+      backgroundColor: c.surfaceAlt,
+      borderColor: c.border,
       borderRadius: 16,
       borderWidth: 2,
       height: 84,
@@ -206,14 +224,14 @@ const makeStyles = (c: ThemeColors) =>
       width: '100%',
     },
     cardPreviewActive: {
-      borderColor: '#22C55E',
+      borderColor: c.primaryGreen,
       borderWidth: 2,
     },
     previewImage: {
       ...StyleSheet.absoluteFillObject,
     },
     checkBadge: {
-      backgroundColor: '#0F172A',
+      backgroundColor: c.pageBackground,
       borderRadius: 10,
       position: 'absolute',
       right: 6,
@@ -227,7 +245,7 @@ const makeStyles = (c: ThemeColors) =>
       textAlign: 'center',
     },
     cardLabelActive: {
-      color: '#22C55E',
+      color: c.primaryGreen,
       fontWeight: '700',
     },
   });

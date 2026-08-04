@@ -1,4 +1,5 @@
-import { Directory } from 'expo-file-system';
+import { Directory, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
 import type { ReportContent } from '@/src/types/api';
@@ -71,8 +72,21 @@ export async function saveReportFile(
     return saveInBrowser(payload.content, contentType, fileName);
   }
 
-  // SDK 54 wraps the picked native directory at runtime, but its inherited
-  // declaration still exposes the lower-level directory return type.
+  if (Platform.OS === 'ios') {
+    // iOS does not support Android's SAF directory picker well for writable arbitrary folders.
+    // Write to app documents and trigger the native share sheet to let the user save it.
+    const file = Paths.document.createFile(fileName, contentType);
+    file.write(payload.content, { encoding: 'utf8' });
+    
+    await Sharing.shareAsync(file.uri, {
+      UTI: 'public.comma-separated-values-text',
+      mimeType: contentType,
+      dialogTitle: 'Download Report',
+    });
+    return { fileName, uri: file.uri };
+  }
+
+  // Android SDK 54 Directory Picker (SAF)
   const directory = (await Directory.pickDirectoryAsync()) as Directory;
   let file: ReturnType<Directory['createFile']>;
   let savedFileName = fileName;

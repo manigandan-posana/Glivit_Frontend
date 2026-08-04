@@ -160,7 +160,6 @@ export type DeviceSummary = {
 export type DeviceDetail = DeviceSummary & {
   model?: string | null;
   projectId?: number | null;
-  groupId?: number | null;
   managerId?: number | null;
   simNumber?: string | null;
   simProvider?: string | null;

@@ -19,6 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { Fleet3DOverlay, type Fleet3DOverlayMarker } from '@/src/components/Fleet3DOverlay';
 import { FleetWebMap, type FleetWebMapHandle, type WebMapMarker } from '@/src/components/FleetWebMap';
+import { LiveVehicleMapMarker } from '@/src/components/LiveVehicleMapMarker';
 import MapView, { Marker } from '@/src/components/maps/NativeMap';
 import {
   getVehicleModel,
@@ -90,74 +91,26 @@ export default function AllVehiclesMapScreen() {
   // stream animates every located vehicle. Positions are interpolated in a ref
   // and published on a throttle so markers glide without re-rendering per frame.
   const { targetsRef, connected } = useFleetLivePositions(located);
-  const renderRef = useRef<Map<number, AnimatedPos>>(new Map());
-  const lastPublishRef = useRef(0);
   const selectedIdRef = useRef<number | null>(null);
   selectedIdRef.current = selectedId;
-  const [animated, setAnimated] = useState<Record<number, AnimatedPos>>({});
 
-  useEffect(() => {
-    let last = Date.now();
-    let raf = 0;
-    const loop = () => {
-      raf = requestAnimationFrame(loop);
-      const now = Date.now();
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      const targets = targetsRef.current;
-      const render = renderRef.current;
-      const damp = 1 - Math.exp(-6 * dt);
-      targets.forEach((t: { latitude: number; longitude: number; heading: number; moving?: boolean }, id: number) => {
-        let r = render.get(id);
-        if (!r) {
-          r = { lat: t.latitude, lng: t.longitude, heading: t.heading };
-          render.set(id, r);
-        }
-        if (t.moving) {
-          r.lat += (t.latitude - r.lat) * damp;
-          r.lng += (t.longitude - r.lng) * damp;
-          r.heading = lerpAngle(r.heading, t.heading, damp);
-        } else {
-          r.lat = t.latitude;
-          r.lng = t.longitude;
-          r.heading = t.heading;
-        }
-      });
-      // Publish on a throttle. If a vehicle is selected, we only publish updates at a slower rate
-      // (every 1200ms) to prevent detail sheet re-renders, and ONLY if auto-follow is enabled.
-      const shouldPublish = selectedIdRef.current == null || autoFollowVehicleRef.current;
-      const throttleInterval = selectedIdRef.current == null ? 120 : 1200;
-      if (shouldPublish && now - lastPublishRef.current >= throttleInterval) {
-        lastPublishRef.current = now;
-        const next: Record<number, AnimatedPos> = {};
-        render.forEach((r, id) => {
-          next[id] = { lat: r.lat, lng: r.lng, heading: r.heading };
-        });
-        setAnimated(next);
-      }
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [targetsRef]);
-
-  // Located devices with their marker positions and status metadata replaced by
-  // live SSE/position updates. The detail sheet keeps using the stable `selected` record.
+  // Located devices with status metadata from SSE.
   const liveDevices = useMemo<LocatedDevice[]>(
     () =>
       located.map((d) => {
         const target = targetsRef.current?.get(d.id);
-        const a = animated[d.id];
         const state = target?.state ?? d.state;
         return {
           ...d,
           state,
           speed: target ? target.speed : (d.speed ?? 0),
-          latitude: a ? a.lat : (target?.latitude ?? d.latitude),
-          longitude: a ? a.lng : (target?.longitude ?? d.longitude),
-          course: a ? a.heading : (target?.heading ?? d.course ?? 0),
+          // We pass initial coordinates; the Native marker animates them natively.
+          latitude: d.latitude,
+          longitude: d.longitude,
+          course: target?.heading ?? d.course ?? 0,
         };
       }),
-    [animated, located, targetsRef]
+    [located, targetsRef]
   );
 
   const statusCounts = useMemo(() => {
@@ -301,19 +254,13 @@ export default function AllVehiclesMapScreen() {
     (id: string | number) => {
       const device = located.find((candidate) => String(candidate.id) === String(id));
       if (!device) return;
-      setSelectedId(device.id);
-      if (useNativeMap) focusNative(device);
+      router.push({ pathname: '/device-profile', params: { id: String(device.id) } });
     },
-    [focusNative, located, useNativeMap]
+    [located, router]
   );
 
-  const clearSelection = useCallback(() => setSelectedId(null), []);
-  const handleVisibleIdsChange = useCallback((visibleIds: string[]) => {
-    const visible = new Set(visibleIds);
-    setSelectedId((current) =>
-      current != null && !visible.has(String(current)) ? null : current
-    );
-  }, []);
+  const clearSelection = useCallback(() => {}, []);
+  const handleVisibleIdsChange = useCallback((visibleIds: string[]) => {}, []);
 
   const openLiveTrack = (item: DeviceSummary) =>
     router.push({ pathname: '/live-track', params: { deviceId: String(item.id), name: item.name, subtitle: item.address ?? '' } });
@@ -348,6 +295,7 @@ export default function AllVehiclesMapScreen() {
           onSelectDevice={selectById}
           onVisibleIdsChange={handleVisibleIdsChange}
           selectedId={selectedId}
+          targetsRef={targetsRef}
         />
       ) : (
         <FleetWebMap
@@ -390,16 +338,8 @@ export default function AllVehiclesMapScreen() {
         </View>
       ) : null}
 
-      {selected ? (
-        <VehicleDetailsBottomSheet
-          bottomInset={68 + (insets.bottom > 0 ? insets.bottom : 8) + 16}
-          device={selected}
-          onOpenLiveTrack={() => openLiveTrack(selected)}
-          onOpenPlayback={() => openPlayback(selected)}
-        />
-      ) : located.length > 0 ? (
+      {located.length > 0 ? (
         <>
-
           <Animated.View
             style={[
               styles.legend,
@@ -468,305 +408,12 @@ function hasCoordinate(device: DeviceSummary): device is LocatedDevice {
   );
 }
 
-function VehicleDetailsBottomSheet({
-  bottomInset,
-  device,
-  onOpenLiveTrack,
-  onOpenPlayback,
-}: {
-  bottomInset: number;
-  device: LocatedDevice;
-  onOpenLiveTrack: () => void;
-  onOpenPlayback: () => void;
-}) {
-  const { colors: c } = useTheme();
-  const styles = useMemo(() => makeStyles(c), [c]);
-  const { height: screenHeight } = useWindowDimensions();
-  const [expanded, setExpanded] = useState(true);
-  const expandedRef = useRef(true);
-  const sheetHeightRef = useRef(0);
-  const dragStartRef = useRef(0);
-  const animationFrameRef = useRef<number | null>(null);
-  const mountedRef = useRef(true);
-  const translateY = useRef(new Animated.Value(0)).current;
-  const { data: detail, isFetching } = useGetDeviceQuery(device.id, { skip: !expanded });
-
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-      if (animationFrameRef.current != null) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      translateY.stopAnimation();
-    },
-    [translateY]
-  );
-
-  const collapsedOffset = useCallback(
-    () => Math.max(160, sheetHeightRef.current - 132),
-    []
-  );
-
-  const snapSheet = useCallback(
-    (nextExpanded: boolean) => {
-      const offset = collapsedOffset();
-      expandedRef.current = nextExpanded;
-      translateY.stopAnimation();
-      if (animationFrameRef.current != null) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-
-      setExpanded(nextExpanded);
-
-      if (nextExpanded) {
-        Animated.spring(translateY, {
-          damping: 24,
-          mass: 0.84,
-          stiffness: 250,
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
-      } else {
-        Animated.spring(translateY, {
-          damping: 25,
-          mass: 0.86,
-          stiffness: 260,
-          toValue: offset,
-          useNativeDriver: true,
-        }).start();
-      }
-    },
-    [collapsedOffset, translateY]
-  );
-
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          gesture.dy > 5 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2,
-        onMoveShouldSetPanResponderCapture: (_, gesture) =>
-          gesture.dy > 5 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2,
-        onPanResponderGrant: () => {
-          translateY.stopAnimation((value) => {
-            dragStartRef.current = value;
-          });
-        },
-        onPanResponderMove: (_, gesture) => {
-          const offset = collapsedOffset();
-          translateY.setValue(
-            Math.max(0, Math.min(offset, dragStartRef.current + gesture.dy))
-          );
-        },
-        onPanResponderRelease: (_, gesture) => {
-          const offset = collapsedOffset();
-          const projected = dragStartRef.current + gesture.dy + gesture.vy * 100;
-          snapSheet(projected < offset * 0.46);
-        },
-        onPanResponderTerminate: () => snapSheet(expandedRef.current),
-      }),
-    [collapsedOffset, snapSheet, translateY]
-  );
-
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height;
-    if (height > 0) sheetHeightRef.current = height;
-  }, []);
-
-  const variant = modelForVehicle(device.category, device.id);
-  const model = getVehicleModel(variant);
-  const speed = Number.isFinite(device.speed) ? Math.round(device.speed) : 0;
-  const heading = Number.isFinite(device.course) ? Math.round(normalizeHeading(device.course)) : 0;
-
-  return (
-    <Animated.View
-      onLayout={handleLayout}
-      {...panResponder.panHandlers}
-      style={[
-        styles.vehicleSheet,
-        {
-          bottom: Math.max(bottomInset, spacing.sm),
-          transform: [{ translateY }],
-        },
-      ]}>
-      <Pressable
-        accessibilityLabel={expanded ? 'Minimize vehicle details' : 'Expand vehicle details'}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        hitSlop={10}
-        onPress={() => snapSheet(!expandedRef.current)}
-        style={styles.sheetHandleHit}>
-        <View style={styles.sheetHandle} />
-      </Pressable>
-
-      <View style={styles.cardTop}>
-        <View style={styles.cardIdentity}>
-          <View style={styles.cardBeacon}>
-            <Vehicle3DMarker
-              heading={normalizeHeading(device.course)}
-              isActive={device.state === 'RUNNING'}
-              renderMode="image"
-              showImageFallback
-              size={68}
-              speed={device.speed}
-              variant={variant}
-            />
-          </View>
-          <View style={styles.cardTitleBlock}>
-            <Text numberOfLines={1} style={styles.cardName}>
-              {device.name}
-            </Text>
-            <Text style={styles.cardId}>
-              UNIT {String(device.id).padStart(4, '0')} / {model.label}
-            </Text>
-          </View>
-        </View>
-        <StatusPill state={device.state} />
-      </View>
-
-      <View style={styles.addressRow}>
-        <MaterialCommunityIcons color="#7890A6" name="map-marker-outline" size={15} />
-        <Text numberOfLines={expanded ? 2 : 1} style={styles.cardAddress}>
-          {device.address ?? 'Address unavailable'}
-        </Text>
-      </View>
-
-      <Animated.View
-        pointerEvents={expanded ? 'auto' : 'none'}
-        style={{
-          opacity: expanded ? 1 : 0,
-        }}
-      >
-        <ScrollView
-          contentContainerStyle={styles.expandedSheetContent}
-          showsVerticalScrollIndicator={false}
-          style={{ maxHeight: Math.max(250, screenHeight * 0.52) }}>
-          <View style={styles.sheetDivider} />
-          <View style={styles.sheetSpeedRow}>
-            <View style={styles.speedReadout}>
-              <Text style={styles.speedNumber}>{speed}</Text>
-              <Text style={styles.speedUnit}>KM/H</Text>
-            </View>
-            {isFetching ? <ActivityIndicator color={c.primary} size="small" /> : null}
-            <Text style={styles.lastUpdate}>{formatLastUpdate(device.lastUpdate)}</Text>
-          </View>
-
-          <View style={styles.detailGrid}>
-            <DetailMetric icon="identifier" label="IMEI" value={device.imei || 'Unavailable'} />
-            <DetailMetric icon="shape-outline" label="Category" value={device.category || 'Unknown'} />
-            <DetailMetric
-              icon="engine-outline"
-              label="Ignition"
-              value={device.ignition == null ? 'Unknown' : device.ignition ? 'On' : 'Off'}
-            />
-            <DetailMetric
-              icon="crosshairs-gps"
-              label="GPS"
-              value={device.gpsValid ? 'Connected' : 'Invalid'}
-            />
-            <DetailMetric icon="compass-outline" label="Heading" value={`${heading} deg`} />
-            <DetailMetric icon="shield-car" label="Device" value={device.status || 'Unknown'} />
-            <DetailMetric
-              icon="account-outline"
-              label="Driver"
-              value={detail?.driverName || 'Unassigned'}
-            />
-            <DetailMetric
-              icon="calendar-clock"
-              label="Expiry"
-              value={detail?.expiryDate || device.expiryDate || 'Not set'}
-            />
-          </View>
-
-          <View style={styles.coordinateRow}>
-            <Text style={styles.coordinateLabel}>LIVE COORDINATES</Text>
-            <Text style={styles.coordinateValue}>
-              {device.latitude.toFixed(5)}, {device.longitude.toFixed(5)}
-            </Text>
-          </View>
-
-          <View style={styles.cardActions}>
-            <Pressable
-              accessibilityLabel="Open cinematic playback"
-              accessibilityRole="button"
-              onPress={onOpenPlayback}
-              style={styles.cardPlay}>
-              <MaterialCommunityIcons color="#E9F2FA" name="movie-open" size={17} />
-              <Text style={styles.cardPlayText}>Cinematic</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel={`Open live tracking for ${device.name}`}
-              accessibilityRole="button"
-              onPress={onOpenLiveTrack}
-              style={styles.trackButton}>
-              <Text style={styles.cardTrack}>Live track</Text>
-              <MaterialCommunityIcons color={c.onPrimary} name="arrow-top-right" size={16} />
-            </Pressable>
-          </View>
-        </ScrollView>
-      </Animated.View>
-
-      {!expanded ? (
-        <Pressable
-          accessibilityLabel="Expand vehicle details"
-          accessibilityRole="button"
-          accessibilityState={{ expanded: false }}
-          onPress={() => snapSheet(true)}
-          style={styles.collapsedSheetOverlay}
-        />
-      ) : null}
-    </Animated.View>
-  );
-}
-
-function DetailMetric({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={sheetStyles.detailMetric}>
-      <MaterialCommunityIcons color="#2BE69E" name={icon} size={16} />
-      <View style={sheetStyles.detailMetricText}>
-        <Text style={sheetStyles.detailMetricLabel}>{label}</Text>
-        <Text numberOfLines={1} style={sheetStyles.detailMetricValue}>
-          {value}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 function formatLastUpdate(value?: string | null) {
   if (!value) return 'Update unavailable';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Update unavailable';
   return `Updated ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
-
-const sheetStyles = StyleSheet.create({
-  detailMetric: {
-    alignItems: 'center',
-    flexBasis: '47%',
-    flexDirection: 'row',
-    gap: 7,
-    minWidth: 0,
-  },
-  detailMetricText: { flex: 1, minWidth: 0 },
-  detailMetricLabel: {
-    color: '#6F879D',
-    fontSize: 8,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  detailMetricValue: { color: '#EAF2F8', fontSize: 11, fontWeight: '800', marginTop: 1 },
-});
 
 function NativeFleetMap({
   mapRef,
@@ -778,6 +425,7 @@ function NativeFleetMap({
   onSelectDevice,
   onVisibleIdsChange,
   selectedId,
+  targetsRef,
 }: {
   mapRef: React.RefObject<MapView | null>;
   devices: LocatedDevice[];
@@ -788,6 +436,7 @@ function NativeFleetMap({
   onSelectDevice: (id: string | number) => void;
   onVisibleIdsChange: (ids: string[]) => void;
   selectedId: number | null;
+  targetsRef: React.MutableRefObject<Map<number, import('@/src/services/fleetLivePositions').FleetTarget>>;
 }) {
   const { stateColors } = useTheme();
   const screen = useWindowDimensions();
@@ -990,11 +639,13 @@ function NativeFleetMap({
         style={StyleSheet.absoluteFillObject}
         customMapStyle={mapStyle}
         mapType={
-          Platform.OS === 'ios' && mapPreferences.mapType === 'terrain'
-            ? 'standard'
-            : mapPreferences.mapType === 'satellite'
-              ? 'hybrid'
-              : mapPreferences.mapType
+          Platform.OS === 'ios'
+            ? mapPreferences.mapType === 'terrain'
+              ? 'mutedStandard'
+              : mapPreferences.mapType === 'satellite'
+                ? 'satellite'
+                : 'standard'
+            : mapPreferences.mapType
         }
         showsTraffic={mapPreferences.details.traffic}
         loadingBackgroundColor="#E8EDF2"
@@ -1016,31 +667,16 @@ function NativeFleetMap({
           zoom: 11,
         }}>
         {devices.map((device) => {
-          const isSelected = selectedId === device.id;
-          const markerSize = isSelected ? 76 : 60;
           return (
-            <Marker
+            <LiveVehicleMapMarker
               key={`native-vehicle-${device.id}`}
-              coordinate={{ latitude: device.latitude, longitude: device.longitude }}
-              anchor={{ x: 0.5, y: 0.5 }}
-              flat={false}
-              opacity={threeFailed ? 1 : 0}
-              tracksViewChanges={threeFailed}
-              onPress={(e) => {
-                e.stopPropagation();
-                onSelectDevice(device.id);
-              }}
-              zIndex={isSelected ? 50 : 20}>
-              <Vehicle3DMarker
-                heading={normalizeHeading(device.course - projection.heading)}
-                isActive={device.state === 'RUNNING'}
-                renderMode="image"
-                showImageFallback
-                size={markerSize}
-                speed={device.speed}
-                variant={modelForVehicle(device.category, device.id)}
-              />
-            </Marker>
+              device={device}
+              targetsRef={targetsRef}
+              projectionHeading={projection.heading}
+              isSelected={selectedId === device.id}
+              onSelect={onSelectDevice}
+              threeFailed={threeFailed}
+            />
           );
         })}
       </MapView>
