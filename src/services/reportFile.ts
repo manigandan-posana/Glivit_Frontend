@@ -74,16 +74,35 @@ export async function saveReportFile(
 
   if (Platform.OS === 'ios') {
     // iOS does not support Android's SAF directory picker well for writable arbitrary folders.
-    // Write to app documents and trigger the native share sheet to let the user save it.
-    const file = Paths.document.createFile(fileName, contentType);
-    file.write(payload.content, { encoding: 'utf8' });
-    
-    await Sharing.shareAsync(file.uri, {
-      UTI: 'public.comma-separated-values-text',
-      mimeType: contentType,
-      dialogTitle: 'Download Report',
-    });
-    return { fileName, uri: file.uri };
+    // Write to app cache directory and trigger the native share sheet to let the user save it.
+    const file = Paths.cache.createFile(fileName, contentType);
+    const isBinary = !contentType.includes('text/') && !contentType.includes('csv');
+    const encoding = isBinary ? 'base64' : 'utf8';
+
+    try {
+      file.write(payload.content, { encoding });
+      const info = file.info();
+      
+      if (!info.exists || !info.size) {
+        throw new Error('The report could not be written or is empty');
+      }
+
+      await Sharing.shareAsync(file.uri, {
+        UTI: isBinary ? 'public.data' : 'public.comma-separated-values-text',
+        mimeType: contentType,
+        dialogTitle: 'Download Report',
+      });
+      return { fileName, uri: file.uri };
+    } finally {
+      // Clean up the temporary file on iOS after sharing (whether it succeeded, was cancelled, or failed)
+      if (file.exists) {
+        try {
+          file.delete();
+        } catch (e) {
+          // Best-effort cleanup
+        }
+      }
+    }
   }
 
   // Android SDK 54 Directory Picker (SAF)
@@ -98,8 +117,11 @@ export async function saveReportFile(
     file = directory.createFile(savedFileName, contentType);
   }
 
+  const isBinary = !contentType.includes('text/') && !contentType.includes('csv');
+  const encoding = isBinary ? 'base64' : 'utf8';
+
   try {
-    file.write(payload.content, { encoding: 'utf8' });
+    file.write(payload.content, { encoding });
     const info = file.info();
     if (!info.exists || !info.size) {
       throw new Error('The report could not be written');

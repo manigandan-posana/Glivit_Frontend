@@ -280,9 +280,10 @@ export function NotificationCenter({ tint = '#EAF3FB' }: { tint?: string }) {
           </View>
 
           <View style={styles.panelBody}>
-            {tab === 'ai' ? (
+            <View style={{ flex: 1, display: tab === 'ai' ? 'flex' : 'none' }}>
               <AiCommandCentrePanel onClose={() => setOpen(false)} />
-            ) : (
+            </View>
+            <View style={{ flex: 1, display: tab === 'alerts' ? 'flex' : 'none' }}>
               <FlatList
                 data={notifications}
                 keyExtractor={(item) => item.key}
@@ -334,7 +335,7 @@ export function NotificationCenter({ tint = '#EAF3FB' }: { tint?: string }) {
                   </Pressable>
                 )}
               />
-            )}
+            </View>
           </View>
         </View>
       </Modal>

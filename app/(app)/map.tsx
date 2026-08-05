@@ -181,6 +181,11 @@ export default function AllVehiclesMapScreen() {
     outputRange: [0, 0.9, 1],
   });
 
+  const aiFabTranslateY = legendAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -180],
+  });
+
   const [mapPreferences, setMapPreferences] = useState<MapPreferences>(DEFAULT_MAP_PREFERENCES);
 
   useEffect(() => {
@@ -382,6 +387,20 @@ export default function AllVehiclesMapScreen() {
           </Animated.View>
         </>
       ) : null}
+
+      <Animated.View
+        style={[
+          styles.aiFab,
+          {
+            bottom: 68 + (insets.bottom > 0 ? insets.bottom : 8) + 16,
+            transform: [{ translateY: aiFabTranslateY }],
+          },
+        ]}
+      >
+        <Pressable style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }} onPress={() => router.push('/ai-chat')}>
+          <MaterialCommunityIcons name="robot-outline" size={28} color="#ffffff" />
+        </Pressable>
+      </Animated.View>
 
       <MapLayersBottomSheet
         visible={showLayersSheet}
@@ -986,6 +1005,22 @@ const makeStyles = (c: ThemeColors) =>
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.28,
       shadowRadius: 18,
+    },
+    aiFab: {
+      position: 'absolute',
+      right: spacing.md,
+      backgroundColor: c.primary,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: c.shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 6,
+      elevation: 6,
+      zIndex: 45,
     },
     legendChip: { alignItems: 'center', flexDirection: 'column', gap: 4 },
     legendTopRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },

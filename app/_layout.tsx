@@ -20,10 +20,9 @@ import {
 import { store } from '@/src/store/store';
 import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
 
-/** Status bar content colour follows the active theme. */
+/** Status bar forced to light to contrast with the dark app headers. */
 function ThemedStatusBar() {
-  const { isDark } = useTheme();
-  return <StatusBar style={isDark ? 'light' : 'dark'} translucent />;
+  return <StatusBar style="light" backgroundColor="transparent" translucent />;
 }
 
 // Keep the native splash up until persisted auth/branding is loaded, so no

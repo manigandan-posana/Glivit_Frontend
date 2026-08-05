@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, Tabs, useNavigation } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import React, { useState, useEffect } from 'react';
 import { ActivityIndicator, Pressable, Text, View, StyleSheet } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
@@ -169,30 +170,40 @@ export default function AppLayout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.primaryGreen }}>
+      <StatusBar style="light" backgroundColor="transparent" translucent />
       <Tabs
         key={`tenant-${tenantEpoch}`}
         screenOptions={{
           headerStyle: {
-            borderBottomLeftRadius: 20,
-            borderBottomRightRadius: 20,
-            backgroundColor: c.primaryGreen,
-            elevation: 8,
-            shadowColor: c.shadowColor,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.12,
-            shadowRadius: 8,
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
+            backgroundColor: c.pageBackground,
+            elevation: 0,
+            shadowOpacity: 0,
           },
           headerBackground: () => (
-            <LinearGradient
-              colors={[c.primaryGreen, c.darkGreen]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{
-                ...StyleSheet.absoluteFillObject,
-                borderBottomLeftRadius: 20,
-                borderBottomRightRadius: 20,
-              }}
-            />
+            <View style={{
+              ...StyleSheet.absoluteFillObject,
+              borderBottomLeftRadius: 24,
+              borderBottomRightRadius: 24,
+              elevation: 12,
+              shadowColor: c.shadowColor,
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.2,
+              shadowRadius: 12,
+              backgroundColor: c.primaryGreen,
+            }}>
+              <LinearGradient
+                colors={[c.loginBackground, c.primaryGreen]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={{
+                  ...StyleSheet.absoluteFillObject,
+                  borderBottomLeftRadius: 24,
+                  borderBottomRightRadius: 24,
+                }}
+              />
+            </View>
           ),
           headerTintColor: c.onPrimary,
           headerTitleStyle: { fontWeight: '800' },
@@ -284,6 +295,7 @@ export default function AppLayout() {
             href: null,
             title: 'AI Command Centre',
             headerLeft: () => <HeaderBackButton />,
+            tabBarStyle: { display: 'none' },
           }}
         />
         <Tabs.Screen

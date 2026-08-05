@@ -159,14 +159,14 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
         
         <Animated.View style={styles.panel} entering={SlideInDown.duration(250)} exiting={SlideOutDown.duration(250)}>
           <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
-            <MaterialCommunityIcons name="close" size={24} color={c.textSecondary} />
+            <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
           </Pressable>
 
           <LinearGradient
-            colors={[c.primaryGreen, c.darkGreen]}
+            colors={[c.loginBackground, c.primaryGreen]}
             start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.header}
+            end={{ x: 1, y: 0 }}
+            style={[styles.header, { elevation: 12, shadowColor: c.shadowColor, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 12 }]}
           >
             <View style={styles.avatarContainer}>
               <Pressable onPress={promptImageChoice}>
