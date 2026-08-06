@@ -103,19 +103,21 @@ export default function AiChatScreen() {
   const renderItem = ({ item }: { item: ChatMessageDto }) => {
     const isUser = item.role === 'user';
     return (
-      <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.aiBubble]}>
+      <View style={[styles.messageRow, isUser ? styles.userRow : styles.aiRow]}>
         {!isUser && (
           <View style={styles.aiIconWrapper}>
             <MaterialCommunityIcons name="robot-outline" size={16} color="#fff" />
           </View>
         )}
-        <View style={styles.messageContent}>
-          {isUser ? (
-            <Text style={[styles.messageText, styles.userMessageText]}>{item.content}</Text>
-          ) : (
-            <Text style={styles.messageText}>{formatAiPlainText(item.content)}</Text>
-          )}
-          <Text style={[styles.timestamp, isUser && styles.timestampUser]}>{messageTime(item.timestamp)}</Text>
+        <View style={[styles.bubbleContainer, isUser ? styles.userBubbleContainer : styles.aiBubbleContainer]}>
+          <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble]}>
+            <Text style={[styles.messageText, isUser ? styles.userMessageText : styles.aiMessageText]}>
+              {isUser ? item.content : formatAiPlainText(item.content)}
+            </Text>
+          </View>
+          <Text style={[styles.timestamp, isUser ? styles.userTimestamp : styles.aiTimestamp]}>
+            {messageTime(item.timestamp)}
+          </Text>
         </View>
       </View>
     );
@@ -123,13 +125,23 @@ export default function AiChatScreen() {
 
   const quickPrompts = ['Fleet status', 'Maintenance', 'Alerts', 'Driver scores', 'Fuel report'];
 
-  const bottomPadding = keyboardOpen ? spacing.md : Math.max(spacing.md, insets.bottom);
+  const QUICK_PROMPT_ICONS: Record<string, React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+    'Fleet status': 'chart-bar',
+    'Maintenance': 'wrench',
+    'Alerts': 'bell-outline',
+    'Driver scores': 'star-outline',
+    'Fuel report': 'gas-station',
+  };
+
+  const bottomPadding = keyboardOpen
+    ? spacing.md
+    : Math.max(spacing.md, insets.bottom);
 
   return (
     <KeyboardAvoidingView
       style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 50 : 0}>
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 60 : 0}>
       <FlatList
         ref={listRef}
         style={styles.messageList}
@@ -155,31 +167,46 @@ export default function AiChatScreen() {
       />
 
       {messages.length <= 1 && (
-        <View style={styles.quickRow}>
-          {quickPrompts.map((p) => (
-            <Pressable key={p} style={styles.quickChip} onPress={() => setInput(p)}>
-              <Text style={styles.quickChipText}>{p}</Text>
-            </Pressable>
-          ))}
+        <View style={styles.quickContainer}>
+          <FlatList
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            data={quickPrompts}
+            keyExtractor={(item) => item}
+            contentContainerStyle={styles.quickScrollContent}
+            renderItem={({ item }) => (
+              <Pressable style={styles.quickChip} onPress={() => setInput(item)}>
+                <MaterialCommunityIcons
+                  name={QUICK_PROMPT_ICONS[item] || 'help-circle-outline'}
+                  size={14}
+                  color={c.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.quickChipText}>{item}</Text>
+              </Pressable>
+            )}
+          />
         </View>
       )}
 
       <View style={[styles.inputArea, { paddingBottom: bottomPadding }]}>
-        <TextInput
-          style={styles.input}
-          placeholder="Ask AI anything about your fleet..."
-          placeholderTextColor={c.textMuted}
-          value={input}
-          onChangeText={setInput}
-          onSubmitEditing={handleSend}
-          returnKeyType="send"
-          multiline
-        />
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Ask anything about your fleet..."
+            placeholderTextColor={c.textMuted}
+            value={input}
+            onChangeText={setInput}
+            multiline
+            maxLength={1000}
+          />
+        </View>
+
         <Pressable
           style={[styles.sendButton, (!input.trim() || isLoading) && styles.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!input.trim() || isLoading}>
-          <MaterialCommunityIcons name="send" size={20} color="#fff" />
+          <MaterialCommunityIcons name="send" size={18} color="#fff" />
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -190,16 +217,18 @@ const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: c.pageBackground },
     messageList: { flex: 1 },
-    messageListContent: { padding: spacing.md, gap: spacing.sm, paddingBottom: spacing.lg },
-    messageBubble: {
-      maxWidth: '88%',
+    messageListContent: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.lg },
+    messageRow: {
       flexDirection: 'row',
-      gap: spacing.sm,
-      alignItems: 'flex-start',
+      width: '100%',
     },
-    userBubble: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
-    aiBubble: { alignSelf: 'flex-start' },
-    messageContent: { flex: 1, gap: 3 },
+    userRow: {
+      justifyContent: 'flex-end',
+    },
+    aiRow: {
+      justifyContent: 'flex-start',
+      gap: spacing.sm,
+    },
     aiIconWrapper: {
       backgroundColor: c.primary,
       borderRadius: radius.pill,
@@ -210,28 +239,52 @@ const makeStyles = (c: ThemeColors) =>
       marginTop: 2,
       flexShrink: 0,
     },
-    messageText: {
-      color: c.textPrimary,
-      fontSize: typography.body,
-      lineHeight: 21,
+    bubbleContainer: {
+      maxWidth: '82%',
+      gap: 4,
+    },
+    userBubbleContainer: {
+      alignItems: 'flex-end',
+    },
+    aiBubbleContainer: {
+      alignItems: 'flex-start',
+      flex: 1,
+    },
+    bubble: {
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    userBubble: {
+      backgroundColor: c.primary,
+      borderBottomRightRadius: 2,
+    },
+    aiBubble: {
       backgroundColor: c.surface,
       borderColor: c.border,
       borderWidth: 1,
-      borderRadius: radius.md,
       borderBottomLeftRadius: 2,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-      flexShrink: 1,
+    },
+    messageText: {
+      fontSize: typography.body,
+      lineHeight: 21,
     },
     userMessageText: {
       color: '#fff',
-      backgroundColor: c.primary,
-      borderColor: 'transparent',
-      borderBottomLeftRadius: radius.md,
-      borderBottomRightRadius: 2,
     },
-    timestamp: { fontSize: 10, color: c.textMuted, marginLeft: 4 },
-    timestampUser: { textAlign: 'right', marginRight: 4 },
+    aiMessageText: {
+      color: c.textPrimary,
+    },
+    timestamp: {
+      fontSize: 10,
+      color: c.textMuted,
+    },
+    userTimestamp: {
+      marginRight: 4,
+    },
+    aiTimestamp: {
+      marginLeft: 4,
+    },
     typingIndicator: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
     typingBubble: {
       flexDirection: 'row',
@@ -245,49 +298,64 @@ const makeStyles = (c: ThemeColors) =>
       paddingVertical: spacing.sm,
     },
     typingText: { color: c.textMuted, fontSize: typography.caption, fontStyle: 'italic' },
-    quickRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: spacing.sm,
-      paddingHorizontal: spacing.md,
+    quickContainer: {
       paddingVertical: spacing.sm,
+      backgroundColor: 'transparent',
+    },
+    quickScrollContent: {
+      paddingHorizontal: spacing.md,
+      gap: spacing.sm,
     },
     quickChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: c.surface,
-      borderColor: c.primary,
+      borderColor: c.border,
       borderWidth: 1,
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
-      paddingVertical: 6,
+      paddingVertical: 8,
     },
-    quickChipText: { color: c.primary, fontSize: typography.caption, fontWeight: '700' },
+    quickChipText: { color: c.textPrimary, fontSize: typography.caption, fontWeight: '600' },
     inputArea: {
       flexDirection: 'row',
-      padding: spacing.md,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
       backgroundColor: c.surface,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderColor: c.border,
       gap: spacing.sm,
-      alignItems: 'flex-end',
+      alignItems: 'center',
+    },
+    inputContainer: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.pageBackground,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingHorizontal: spacing.md,
+      minHeight: 44,
+      maxHeight: 120,
     },
     input: {
       flex: 1,
-      minHeight: 44,
-      maxHeight: 120,
-      backgroundColor: c.pageBackground,
-      borderRadius: radius.md,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 10,
+      paddingVertical: Platform.OS === 'ios' ? 10 : 6,
       color: c.textPrimary,
       fontSize: typography.body,
+      maxHeight: 100,
     },
     sendButton: {
-      width: 44,
-      height: 44,
+      width: 40,
+      height: 40,
       borderRadius: radius.pill,
       backgroundColor: c.primary,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    sendButtonDisabled: { opacity: 0.4 },
+    sendButtonDisabled: {
+      backgroundColor: c.border,
+      opacity: 0.7,
+    },
   });

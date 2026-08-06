@@ -137,6 +137,7 @@ export default function GeofencesScreen() {
   const [editorTarget, setEditorTarget] = React.useState<'new' | GeofenceDto | null>(null);
   const [locationLoading, setLocationLoading] = React.useState(false);
   const [searchText, setSearchText] = React.useState('');
+  const [selectedPlace, setSelectedPlace] = React.useState<{ name: string; latitude: number; longitude: number } | null>(null);
   const [onlineSuggestions, setOnlineSuggestions] = React.useState<Array<{ name: string; latitude: number; longitude: number }>>([]);
   const [isSearchingOnline, setIsSearchingOnline] = React.useState(false);
   const [searchError, setSearchError] = React.useState<string | null>(null);
@@ -174,7 +175,7 @@ export default function GeofencesScreen() {
   }, [watchedRadius]);
 
   const setPickedCoordinate = React.useCallback(
-    (coordinate: Coordinate, animate = true) => {
+    (coordinate: Coordinate, animate = true, updateAddress = true) => {
       setValue('latitude', coordinate.latitude.toFixed(6), { shouldDirty: true, shouldValidate: true });
       setValue('longitude', coordinate.longitude.toFixed(6), { shouldDirty: true, shouldValidate: true });
       clearErrors(['latitude', 'longitude']);
@@ -184,6 +185,34 @@ export default function GeofencesScreen() {
           { duration: 360 }
         );
       }
+      if (updateAddress) {
+        fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coordinate.latitude}&lon=${coordinate.longitude}`,
+          { headers: { 'User-Agent': 'GlivtTrackerApp/1.0' } }
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            let name = '';
+            if (data?.display_name) {
+              name = data.display_name.split(',').slice(0, 3).join(',');
+            } else if (data?.address) {
+              const addr = data.address;
+              name = [addr.suburb || addr.neighbourhood, addr.city || addr.town || addr.county]
+                .filter(Boolean)
+                .join(', ');
+            }
+            if (!name) {
+              name = `Locality (${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)})`;
+            }
+            setSearchText(name);
+            setSelectedPlace({ name, latitude: coordinate.latitude, longitude: coordinate.longitude });
+          })
+          .catch(() => {
+            const name = `Locality (${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)})`;
+            setSearchText(name);
+            setSelectedPlace({ name, latitude: coordinate.latitude, longitude: coordinate.longitude });
+          });
+      }
     },
     [clearErrors, setValue]
   );
@@ -191,6 +220,7 @@ export default function GeofencesScreen() {
   const openCreate = React.useCallback(() => {
     reset(DEFAULT_FORM);
     setSearchText('');
+    setSelectedPlace(null);
     setSaveSuccess(false);
     setEditorTarget('new');
   }, [reset]);
@@ -198,16 +228,19 @@ export default function GeofencesScreen() {
   const openEdit = React.useCallback(
     (geofence: GeofenceDto) => {
       const [longitude, latitude] = geofence.coordinates?.[0] ?? [];
+      const latVal = Number.isFinite(latitude) ? latitude as number : Number(DEFAULT_FORM.latitude);
+      const lngVal = Number.isFinite(longitude) ? longitude as number : Number(DEFAULT_FORM.longitude);
       reset({
         name: geofence.name,
-        latitude: Number.isFinite(latitude) ? String(latitude) : DEFAULT_FORM.latitude,
-        longitude: Number.isFinite(longitude) ? String(longitude) : DEFAULT_FORM.longitude,
+        latitude: String(latVal),
+        longitude: String(lngVal),
         radiusMeters: Number.isFinite(geofence.radiusMeters)
           ? String(Number((geofence.radiusMeters as number) / 1000))
           : DEFAULT_FORM.radiusMeters,
         assignedDeviceIds: Array.isArray(geofence.assignedDeviceIds) ? geofence.assignedDeviceIds : [],
       });
-      setSearchText('');
+      setSearchText(geofence.name);
+      setSelectedPlace({ name: geofence.name, latitude: latVal, longitude: lngVal });
       setSaveSuccess(false);
       setEditorTarget(geofence);
     },
@@ -226,7 +259,7 @@ export default function GeofencesScreen() {
 
   React.useEffect(() => {
     const query = searchText.trim();
-    if (query.length < 3) {
+    if (query.length < 3 || (selectedPlace && selectedPlace.name === query)) {
       setOnlineSuggestions([]);
       setIsSearchingOnline(false);
       setSearchError(null);
@@ -266,7 +299,7 @@ export default function GeofencesScreen() {
       active = false;
       clearTimeout(timer);
     };
-  }, [searchText]);
+  }, [searchText, selectedPlace]);
 
   const locationSuggestions = React.useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -345,7 +378,7 @@ export default function GeofencesScreen() {
           geo.getCurrentPosition(
             (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
             (err) => reject(err),
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
           );
         });
       } else {
@@ -406,74 +439,40 @@ export default function GeofencesScreen() {
           return;
         }
 
-        // 3. Obtain high-accuracy current location with a fallback timeout and last known position fallback
-        const getPos = () =>
-          new Promise<Coordinate>((resolve, reject) => {
-            let finished = false;
-            const timer = setTimeout(() => {
+        // 3. Obtain high-accuracy current location with a fallback timeout
+        coords = await new Promise<Coordinate>((resolve, reject) => {
+          let finished = false;
+          const timer = setTimeout(() => {
+            if (!finished) {
+              finished = true;
+              reject(new Error('Location request timed out. Please check your GPS signal and try again.'));
+            }
+          }, 10000);
+
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          })
+            .then((pos) => {
               if (!finished) {
                 finished = true;
-                reject(new Error('Location request timed out. Please check your GPS signal and try again.'));
+                clearTimeout(timer);
+                resolve({
+                  latitude: pos.coords.latitude,
+                  longitude: pos.coords.longitude,
+                });
               }
-            }, 10000);
-
-            Location.getCurrentPositionAsync({
-              accuracy: Location.Accuracy.High,
             })
-              .then((pos) => {
-                if (!finished) {
-                  finished = true;
-                  clearTimeout(timer);
-                  resolve({
-                    latitude: pos.coords.latitude,
-                    longitude: pos.coords.longitude,
-                  });
-                }
-              })
-              .catch((err) => {
-                if (!finished) {
-                  finished = true;
-                  clearTimeout(timer);
-                  reject(err);
-                }
-              });
-          });
-
-        try {
-          coords = await getPos();
-        } catch {
-          // Fallback to last known position if fresh fix times out or fails
-          const lastKnown = await Location.getLastKnownPositionAsync({});
-          if (lastKnown?.coords) {
-            coords = {
-              latitude: lastKnown.coords.latitude,
-              longitude: lastKnown.coords.longitude,
-            };
-          } else {
-            throw new Error('Could not retrieve current GPS position. Please ensure GPS is active and try again.');
-          }
-        }
+            .catch((err) => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(timer);
+                reject(err);
+              }
+            });
+        });
       }
 
-      setPickedCoordinate(coords, true);
-
-      // Perform reverse geocoding to automatically display place name/address
-      let placeName = 'Current Location';
-      try {
-        const reverseRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}`,
-          { headers: { 'User-Agent': 'GlivtTrackerApp/1.0' } }
-        );
-        if (reverseRes.ok) {
-          const reverseData = await reverseRes.json();
-          if (reverseData?.display_name) {
-            placeName = reverseData.display_name.split(',').slice(0, 3).join(',');
-          }
-        }
-      } catch {
-        // Fallback to default
-      }
-      setSearchText(placeName);
+      setPickedCoordinate(coords, true, true);
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -755,6 +754,7 @@ export default function GeofencesScreen() {
                   leftIcon="magnify"
                   onChangeText={(text) => {
                     setSearchText(text);
+                    setSelectedPlace(null);
                     clearErrors(['latitude', 'longitude']);
                   }}
                   onLeftIconPress={handlePerformSearch}
@@ -763,7 +763,27 @@ export default function GeofencesScreen() {
                   returnKeyType="search"
                   value={searchText}
                 />
-                {searchText.trim().length > 0 ? (
+                {selectedPlace &&
+                Math.abs(selectedPlace.latitude - pickedCoordinate.latitude) < 0.0001 &&
+                Math.abs(selectedPlace.longitude - pickedCoordinate.longitude) < 0.0001 ? (
+                  <View style={styles.suggestionList}>
+                    <Pressable
+                      accessibilityLabel={`Selected location: ${selectedPlace.name}`}
+                      accessibilityRole="button"
+                      style={styles.locationSuggestion}>
+                      <MaterialCommunityIcons color={c.primary} name="map-marker" size={17} />
+                      <View style={styles.locationSuggestionText}>
+                        <Text numberOfLines={1} style={styles.locationSuggestionName}>
+                          {selectedPlace.name}
+                        </Text>
+                        <Text style={styles.locationSuggestionMeta}>
+                          {selectedPlace.latitude.toFixed(4)}, {selectedPlace.longitude.toFixed(4)}
+                        </Text>
+                      </View>
+                      <MaterialCommunityIcons color={c.primary} name="check" size={16} />
+                    </Pressable>
+                  </View>
+                ) : searchText.trim().length > 0 ? (
                   <View style={styles.suggestionList}>
                     {isSearchingOnline ? (
                       <View style={styles.searchStatusRow}>
@@ -780,7 +800,8 @@ export default function GeofencesScreen() {
                           onPress={() => {
                             setSearchText(place.name);
                             clearErrors(['latitude', 'longitude']);
-                            setPickedCoordinate({ latitude: place.latitude, longitude: place.longitude }, true);
+                            setPickedCoordinate({ latitude: place.latitude, longitude: place.longitude }, true, false);
+                            setSelectedPlace(place);
                           }}
                           style={styles.locationSuggestion}>
                           <MaterialCommunityIcons color={c.primary} name="map-marker-outline" size={17} />

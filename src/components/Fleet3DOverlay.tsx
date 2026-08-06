@@ -192,7 +192,7 @@ export function Fleet3DOverlay({
           width / 2,
           height / 2,
           -height / 2,
-          0.1,
+          -1000,
           1000
         );
         camera.position.set(0, 0, 500);

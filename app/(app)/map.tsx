@@ -189,10 +189,13 @@ export default function AllVehiclesMapScreen() {
   const [mapPreferences, setMapPreferences] = useState<MapPreferences>(DEFAULT_MAP_PREFERENCES);
 
   useEffect(() => {
-    void loadMapPreferences().then((prefs) => {
-      setMapPreferences(prefs);
+    const sub = navigation.addListener('focus', () => {
+      void loadMapPreferences().then((prefs) => {
+        setMapPreferences(prefs);
+      });
     });
-  }, []);
+    return sub;
+  }, [navigation]);
 
   const activeStyleKey: MapStyleVariant =
     mapPreferences.mapType === 'satellite'
@@ -656,15 +659,13 @@ function NativeFleetMap({
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
-        customMapStyle={mapStyle}
+        customMapStyle={mapPreferences.mapType === 'satellite' ? [] : mapStyle}
         mapType={
-          Platform.OS === 'ios'
-            ? mapPreferences.mapType === 'terrain'
-              ? 'mutedStandard'
-              : mapPreferences.mapType === 'satellite'
-                ? 'satellite'
-                : 'standard'
-            : mapPreferences.mapType
+          mapPreferences.mapType === 'satellite'
+            ? 'hybrid'
+            : mapPreferences.mapType === 'terrain'
+              ? 'terrain'
+              : 'standard'
         }
         showsTraffic={mapPreferences.details.traffic}
         loadingBackgroundColor="#E8EDF2"

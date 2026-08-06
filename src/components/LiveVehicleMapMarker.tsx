@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, memo, useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { AnimatedRegion, MarkerAnimated } from 'react-native-maps';
 import { Marker } from '@/src/components/maps/NativeMap';
 import { Vehicle3DMarker, modelForVehicle } from '@/src/components/Vehicle3DMarker';
@@ -111,15 +111,19 @@ export const LiveVehicleMapMarker = memo(function LiveVehicleMapMarker({
       }}
       zIndex={isSelected ? 50 : 20}
     >
-      <Vehicle3DMarker
-        heading={normalizeHeading((device.course ?? 0) - projectionHeading)}
-        isActive={device.state === 'RUNNING'}
-        renderMode="image"
-        showImageFallback
-        size={markerSize}
-        speed={device.speed ?? 0}
-        variant={modelForVehicle(device.category, device.id)}
-      />
+      {threeFailed ? (
+        <Vehicle3DMarker
+          heading={normalizeHeading((device.course ?? 0) - projectionHeading)}
+          isActive={device.state === 'RUNNING'}
+          renderMode="image"
+          showImageFallback
+          size={markerSize}
+          speed={device.speed ?? 0}
+          variant={modelForVehicle(device.category, device.id)}
+        />
+      ) : (
+        <View style={{ width: markerSize, height: markerSize, backgroundColor: 'transparent' }} />
+      )}
     </AnimatedNativeMarker>
   );
 });

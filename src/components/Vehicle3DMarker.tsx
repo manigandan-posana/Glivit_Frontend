@@ -437,8 +437,8 @@ export const Vehicle3DMarker: React.FC<Vehicle3DMarkerProps> = ({
         0.1,
         100
       );
-      camera.position.set(0, 7.8, -8.6);
-      camera.lookAt(0, 0.65, 0);
+      camera.position.set(0, 8.5, -8.5);
+      camera.lookAt(0, 0.3, 0);
 
       renderer = createExpoThreeRenderer(gl, { antialias: false, alpha: true });
       renderer.setPixelRatio(1);
@@ -461,7 +461,7 @@ export const Vehicle3DMarker: React.FC<Vehicle3DMarkerProps> = ({
       car = built.group;
       materials = built.materials;
       if (built.model) {
-        car.scale.setScalar(4.6 / built.model.targetLengthMeters);
+        car.scale.setScalar(3.8 / built.model.targetLengthMeters);
       }
       // Models are baked nose -> local +Z (see buildCar), so a nose vector of
       // (sin y, 0, cos y) results from rotation.y = y. This camera sits at z = -8.6
@@ -614,7 +614,7 @@ function FallbackVehicleImage({
 }
 
 const styles = StyleSheet.create({
-  container: { backgroundColor: 'transparent', overflow: 'hidden' },
+  container: { backgroundColor: 'transparent', overflow: 'visible' },
   center: { alignItems: 'center', justifyContent: 'center' },
   fallbackGlow: {
     backgroundColor: 'rgba(43, 230, 158, 0.22)',

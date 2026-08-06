@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
@@ -20,9 +20,32 @@ import {
 import { store } from '@/src/store/store';
 import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
 
-/** Status bar forced to light to contrast with the dark app headers. */
+/** Status bar content color is dynamically adapted based on header color and active route. */
 function ThemedStatusBar() {
-  return <StatusBar style="light" backgroundColor="transparent" translucent />;
+  const { isDark } = useTheme();
+  let segments: string[] = [];
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    segments = useSegments();
+  } catch {
+    // Fallback if called during boot before router is initialized
+  }
+
+  // The map screen is transparent/light in light mode and dark in dark mode.
+  // When we are on the map screen, status bar style follows the theme mode.
+  const isMapScreen = segments.length >= 2 && segments.includes('map');
+
+  // In all other cases (e.g. green gradient headers or dark screens like login/device-profile),
+  // we require light text and icons for maximum readability.
+  const statusBarStyle = (isMapScreen && !isDark) ? 'dark' : 'light';
+
+  return (
+    <StatusBar
+      style={statusBarStyle}
+      translucent
+      backgroundColor="transparent"
+    />
+  );
 }
 
 // Keep the native splash up until persisted auth/branding is loaded, so no

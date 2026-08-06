@@ -124,7 +124,7 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
   };
 
   const onLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to sign out?', [
+    Alert.alert('Logout', 'Are you sure you want to log out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
@@ -159,14 +159,14 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
         
         <Animated.View style={styles.panel} entering={SlideInDown.duration(250)} exiting={SlideOutDown.duration(250)}>
           <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
-            <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
+            <MaterialCommunityIcons name="close" size={24} color={c.textSecondary} />
           </Pressable>
 
           <LinearGradient
-            colors={[c.loginBackground, c.primaryGreen]}
+            colors={[c.primaryGreen, c.darkGreen]}
             start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[styles.header, { elevation: 12, shadowColor: c.shadowColor, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 12 }]}
+            end={{ x: 1, y: 1 }}
+            style={styles.header}
           >
             <View style={styles.avatarContainer}>
               <Pressable onPress={promptImageChoice}>
@@ -227,12 +227,8 @@ export function ProfilePanel({ visible, onClose }: ProfilePanelProps) {
               style={({ pressed }) => [styles.logoutButton, pressed && styles.logoutButtonPressed]} 
               onPress={onLogout}
             >
-              {({ pressed }) => (
-                <>
-                  <MaterialCommunityIcons name="logout" size={24} color={pressed ? c.white : c.primaryGreen} />
-                  <Text style={[styles.logoutText, pressed && { color: c.white }]}>Logout</Text>
-                </>
-              )}
+              <MaterialCommunityIcons name="logout" size={24} color="#DC2626" />
+              <Text style={styles.logoutText}>Logout</Text>
             </Pressable>
           </View>
         </Animated.View>
@@ -383,18 +379,18 @@ const makeStyles = (c: ThemeColors, insets: any, mode: string) =>
       paddingVertical: spacing.md,
       borderRadius: radius.md,
       borderWidth: 2,
-      borderColor: c.primaryGreen,
-      backgroundColor: 'transparent',
+      borderColor: '#DC2626',
+      backgroundColor: '#FFFFFF',
       gap: spacing.sm,
       marginTop: spacing.sm,
     },
     logoutButtonPressed: {
-      backgroundColor: c.primaryGreen,
+      backgroundColor: '#FEF2F2',
     },
     logoutText: {
       fontSize: typography.body,
       fontWeight: '800',
-      color: c.primaryGreen,
+      color: '#DC2626',
     },
     colorPreview: {
       width: 24,
