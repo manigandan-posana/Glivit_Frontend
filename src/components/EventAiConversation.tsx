@@ -94,7 +94,7 @@ export function EventAiConversation({
           history,
           message: question,
         }).unwrap();
-        const answer = formatAiPlainText(response?.reply || 'No response');
+        const answer = formatAiPlainText(response?.message);
         if (!answer) throw new Error('AI returned an empty response');
         if (!mountedRef.current) return;
         setMessages((current) => [
@@ -107,7 +107,6 @@ export function EventAiConversation({
               typeof response.timestamp === 'string' && response.timestamp
                 ? response.timestamp
                 : new Date().toISOString(),
-            source: response.source,
           },
         ]);
       } catch {
@@ -119,7 +118,6 @@ export function EventAiConversation({
             role: 'assistant',
             content: CONNECTION_ERROR,
             timestamp: new Date().toISOString(),
-            source: 'NONE',
           },
         ]);
       }
@@ -191,36 +189,14 @@ export function EventAiConversation({
               {!user ? (
                 <MaterialCommunityIcons color={c.primary} name="robot-outline" size={18} />
               ) : null}
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={[
-                    styles.messageText,
-                    !user && styles.aiMessageText,
-                    user && styles.userMessageText,
-                  ]}>
-                  {user ? item.content : formatAiPlainText(item.content, CONNECTION_ERROR)}
-                </Text>
-                {!user && item.source === 'DETERMINISTIC' && (
-                  <View style={styles.sourceNoteRow}>
-                    <MaterialCommunityIcons
-                      name="information-outline"
-                      size={12}
-                      color={c.warningOrange}
-                    />
-                    <Text style={[styles.sourceNoteText, { color: c.warningOrange }]}>
-                      Answered from event data (AI model unavailable)
-                    </Text>
-                  </View>
-                )}
-                {!user && item.source === 'NONE' && (
-                  <View style={styles.sourceNoteRow}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={12} color={c.danger} />
-                    <Text style={[styles.sourceNoteText, { color: c.danger }]}>
-                      The assistant could not be reached
-                    </Text>
-                  </View>
-                )}
-              </View>
+              <Text
+                style={[
+                  styles.messageText,
+                  !user && styles.aiMessageText,
+                  user && styles.userMessageText,
+                ]}>
+                {user ? item.content : formatAiPlainText(item.content, CONNECTION_ERROR)}
+              </Text>
             </View>
           );
         }}
@@ -290,8 +266,6 @@ export function EventAiConversation({
 
 const makeStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    sourceNoteRow: { alignItems: 'center', flexDirection: 'row', marginTop: 4 },
-    sourceNoteText: { fontSize: 10, marginLeft: 4, flexShrink: 1 },
     screen: { backgroundColor: c.pageBackground, flex: 1 },
     content: { gap: spacing.sm, padding: spacing.md, paddingBottom: spacing.lg },
     contextCard: {

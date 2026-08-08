@@ -14,70 +14,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  useSendChatMessageMutation,
-  type ChatMessageDto,
-  type ChatResponseDto,
-} from '@/src/services/aiApi';
-import { apiErrorMessage } from '@/src/services/apiError';
-import { useAppSelector } from '@/src/store/hooks';
+import { useSendChatMessageMutation, type ChatMessageDto } from '@/src/services/aiApi';
 import { formatAiPlainText } from '@/src/services/aiPlainText';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
-const CONNECTION_ERROR = 'Unable to reach the assistant. Please try again.';
-
-/**
- * Short, honest label for where an answer came from.
- *
- * A deterministic answer is still built from the user's real fleet data, so it
- * is labelled as such rather than as a failure - but the *reason* the model was
- * skipped matters: a missing token is an operator problem, a stopped Ollama is
- * a different one, and blaming "the model" for either is misleading.
- */
-function sourceLabel(
-  message: ChatMessageDto
-): { text: string; tone: 'ai' | 'rule' | 'error' } | null {
-  if (message.role !== 'assistant') return null;
-  if (message.source === 'OLLAMA') return null;
-  if (message.source === 'NONE') {
-    return { text: CONNECTION_ERROR, tone: 'error' };
-  }
-  if (message.source === 'DETERMINISTIC') {
-    const reason = degradedReason(message.fallbackReason);
-    const text = reason ? `Answered from your fleet data — ${reason}` : 'Answered from your fleet data.';
-    return { text, tone: 'rule' };
-  }
-  return null;
-}
-
-/** Plain-language cause for a degraded answer. */
-function degradedReason(reason?: string | null): string {
-  if (!reason || reason === 'NONE') {
-    return '';
-  }
-  switch (reason) {
-    case 'OLLAMA_UNAVAILABLE':
-      return 'the AI model is not running';
-    case 'MODEL_NOT_INSTALLED':
-      return 'the configured AI model is not installed';
-    case 'OLLAMA_TIMEOUT':
-      return 'the AI model timed out';
-    case 'NOT_CONFIGURED':
-      return 'the AI service is not configured (missing internal token)';
-    case 'UNAUTHORIZED':
-      return 'the AI service rejected the internal token';
-    case 'CONNECTION_REFUSED':
-    case 'CONNECT_TIMEOUT':
-      return 'the AI service is unreachable';
-    case 'CIRCUIT_OPEN':
-      return 'the AI service is temporarily circuit-broken after repeated failures';
-    case 'EMPTY_RESPONSE':
-      return 'the AI model returned nothing';
-    default:
-      return 'the AI model was unavailable';
-  }
-}
+const CONNECTION_ERROR = 'Unable to connect to AI. Please try again.';
 
 function messageTime(timestamp?: string) {
   const parsed = timestamp ? new Date(timestamp) : new Date();
@@ -100,13 +42,8 @@ export default function AiChatScreen() {
   ]);
   const [input, setInput] = useState('');
   const [sendMessage, { isLoading }] = useSendChatMessageMutation();
-  // The vehicle the user is currently looking at, so "where is it?" resolves.
-  const selectedVehicleId = useAppSelector((s) => s.vehiclePreferences?.selectedVehicleId ?? null);
   const listRef = useRef<FlatList>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  // `isLoading` updates a tick after dispatch, so a fast double-tap could fire
-  // two identical requests before it flips. This ref closes that window.
-  const inFlightRef = useRef(false);
 
   useEffect(() => {
     const showEvents = ['keyboardDidShow', 'keyboardWillShow'] as const;
@@ -126,13 +63,11 @@ export default function AiChatScreen() {
   }, []);
 
   const handleSend = useCallback(async () => {
-    const question = input.trim();
-    if (!question || isLoading || inFlightRef.current) return;
-    inFlightRef.current = true;
+    if (!input.trim() || isLoading) return;
 
     const userMsg: ChatMessageDto = {
       role: 'user',
-      content: question,
+      content: input.trim(),
       timestamp: new Date().toISOString(),
     };
 
@@ -140,45 +75,33 @@ export default function AiChatScreen() {
     setInput('');
 
     try {
-      const response: ChatResponseDto = await sendMessage({
-        message: question,
-        history: messages.slice(-6),
-        ...(selectedVehicleId ? { selectedVehicleId } : {}),
+      const response = await sendMessage({
+        message: userMsg.content,
+        history: messages,
       }).unwrap();
 
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: formatAiPlainText(response.reply || 'No response', CONNECTION_ERROR),
+          content: formatAiPlainText(response.message, 'Unable to connect to AI. Please try again.'),
           timestamp: response.timestamp || new Date().toISOString(),
-          source: response.source,
-          mode: response.mode,
-          fallbackReason: response.fallbackReason,
-          citations: response.citations,
         },
       ]);
-    } catch (error) {
-      // A transport failure is distinct from a degraded AI answer, and is
-      // reported as such rather than being dressed up as an assistant reply.
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: apiErrorMessage(error) || CONNECTION_ERROR,
+          content: 'Unable to connect to AI. Please try again.',
           timestamp: new Date().toISOString(),
-          source: 'NONE',
-          mode: 'UNKNOWN',
         },
       ]);
-    } finally {
-      inFlightRef.current = false;
     }
-  }, [input, isLoading, messages, sendMessage, selectedVehicleId]);
+  }, [input, isLoading, messages, sendMessage]);
 
   const renderItem = ({ item }: { item: ChatMessageDto }) => {
     const isUser = item.role === 'user';
-    const badge = sourceLabel(item);
     return (
       <View style={[styles.messageRow, isUser ? styles.userRow : styles.aiRow]}>
         {!isUser && (
@@ -191,31 +114,6 @@ export default function AiChatScreen() {
             <Text style={[styles.messageText, isUser ? styles.userMessageText : styles.aiMessageText]}>
               {isUser ? item.content : formatAiPlainText(item.content)}
             </Text>
-            {!isUser && badge && (
-              <View style={styles.sourceRow}>
-                <MaterialCommunityIcons
-                  name={badge.tone === 'error' ? 'alert-circle-outline' : 'information-outline'}
-                  size={12}
-                  color={badge.tone === 'error' ? c.danger : c.warningOrange}
-                />
-                <Text
-                  style={[
-                    styles.sourceText,
-                    { color: badge.tone === 'error' ? c.danger : c.warningOrange },
-                  ]}>
-                  {badge.text}
-                </Text>
-              </View>
-            )}
-            {!isUser && (item.citations?.length ?? 0) > 0 && (
-              <View style={styles.citationRow}>
-                {item.citations!.slice(0, 4).map((citation) => (
-                  <View key={`${citation.type}-${citation.id}-${citation.label}`} style={styles.citation}>
-                    <Text style={styles.citationText}>{citation.label}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
           </View>
           <Text style={[styles.timestamp, isUser ? styles.userTimestamp : styles.aiTimestamp]}>
             {messageTime(item.timestamp)}
@@ -400,18 +298,6 @@ const makeStyles = (c: ThemeColors) =>
       paddingVertical: spacing.sm,
     },
     typingText: { color: c.textMuted, fontSize: typography.caption, fontStyle: 'italic' },
-    sourceRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
-    sourceText: { fontSize: 10, marginLeft: 4, flexShrink: 1 },
-    citationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
-    citation: {
-      backgroundColor: c.pageBackground,
-      borderColor: c.border,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: radius.pill,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 2,
-    },
-    citationText: { color: c.textSecondary, fontSize: 10, fontWeight: '600' },
     quickContainer: {
       paddingVertical: spacing.sm,
       backgroundColor: 'transparent',

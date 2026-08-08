@@ -1,6 +1,5 @@
 import type { PlaybackTrackPoint } from '@/src/types/api';
 import { snapCoordinateToRoadSync } from '@/src/services/roadSnapping';
-import { bearingDeg, haversineKm, lerpAngle, normalizeHeading } from '@/src/services/geoMath';
 
 /**
  * Truthful playback motion engine.
@@ -57,6 +56,7 @@ export type PlaybackSample = {
   atEnd: boolean;
 };
 
+import { bearingDeg, haversineKm, lerpAngle, normalizeHeading } from '@/src/services/geoMath';
 export { bearingDeg, haversineKm, lerpAngle, normalizeHeading };
 
 const MIN_BEARING_DISTANCE_KM = 0.001;
@@ -116,32 +116,30 @@ function preparePoints(rawPoints: PlaybackTrackPoint[]): {
     acceptedTimes.push(item.time);
   }
 
-  const snappedCoords: { lat: number; lng: number; snapped: boolean }[] = [];
-  accepted.forEach((point, index) => {
-    const snap = snapCoordinateToRoadSync(point.lat, point.lng, point.course);
-    let lat = snap.snapped ? snap.latitude : point.lat;
-    let lng = snap.snapped ? snap.longitude : point.lng;
-
-    if (!snap.snapped && index > 0) {
-      const lastSnapped = snappedCoords[index - 1];
-      lat = lastSnapped.lat;
-      lng = lastSnapped.lng;
-    }
-
-    snappedCoords.push({ lat, lng, snapped: snap.snapped });
-  });
-
   const corrected: PlaybackTrackPoint[] = [];
   accepted.forEach((point, index) => {
-    const coord = snappedCoords[index];
-    const lat = coord.lat;
-    const lng = coord.lng;
+    // Snap raw point to valid road coordinate
+    const snap = snapCoordinateToRoadSync(point.lat, point.lng, point.course);
+    const lastValid = corrected[corrected.length - 1];
+    const lat = snap.snapped ? snap.latitude : point.lat;
+    const lng = snap.snapped ? snap.longitude : point.lng;
 
-    const nextCoord = snappedCoords[index + 1];
-    const prevCoord = snappedCoords[index - 1];
-
-    const nextDistance = nextCoord ? haversineKm(lat, lng, nextCoord.lat, nextCoord.lng) : 0;
-    const previousDistance = prevCoord ? haversineKm(prevCoord.lat, prevCoord.lng, lat, lng) : 0;
+    // Bearing is derived from where the vehicle actually WENT, in priority order:
+    //
+    //   1. barely moved  -> hold the last known bearing (never spin on GPS jitter)
+    //   2. next fix      -> bearing from here to the next coordinate (travel forward)
+    //   3. previous fix  -> bearing from the previous coordinate to here (last point)
+    //   4. recorded course from the device
+    //   5. last known bearing
+    //
+    // The snapped ROAD bearing is deliberately absent. A road's orientation says
+    // nothing about which way a vehicle is driving along it, so preferring it (as
+    // this once did) rendered any vehicle travelling "against" the stored road
+    // direction facing backwards.
+    const next = accepted[index + 1];
+    const previous = accepted[index - 1];
+    const nextDistance = next ? haversineKm(lat, lng, next.lat, next.lng) : 0;
+    const previousDistance = previous ? haversineKm(previous.lat, previous.lng, lat, lng) : 0;
     const previousBearing = corrected[index - 1]?.course;
     const isStopped =
       point.speed < 2 &&
@@ -151,10 +149,10 @@ function preparePoints(rawPoints: PlaybackTrackPoint[]): {
     const derived =
       isStopped && Number.isFinite(previousBearing)
         ? normalizeHeading(previousBearing)
-        : nextCoord && nextDistance >= MIN_BEARING_DISTANCE_KM
-          ? bearingDeg(lat, lng, nextCoord.lat, nextCoord.lng)
-          : prevCoord && previousDistance >= MIN_BEARING_DISTANCE_KM
-            ? bearingDeg(prevCoord.lat, prevCoord.lng, lat, lng)
+        : next && nextDistance >= MIN_BEARING_DISTANCE_KM
+          ? bearingDeg(lat, lng, next.lat, next.lng)
+          : previous && previousDistance >= MIN_BEARING_DISTANCE_KM
+            ? bearingDeg(previous.lat, previous.lng, lat, lng)
             : Number.isFinite(point.course) && point.course !== 0
               ? normalizeHeading(point.course)
               : normalizeHeading(previousBearing, 0);

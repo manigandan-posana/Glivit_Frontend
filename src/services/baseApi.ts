@@ -253,7 +253,6 @@ export const baseApi = createApi({
   reducerPath: 'api',
   baseQuery: hybridBaseQuery,
   tagTypes: [
-    'AiEvent',
     'Audit',
     'Command',
     'Dashboard',
