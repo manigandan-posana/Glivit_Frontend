@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AiStatusBadge, DemoDataBanner, NoDataYetView } from '@/src/components/AiStateViews';
 import { EventAiConversation } from '@/src/components/EventAiConversation';
 import { Card } from '@/src/components/ui/Card';
 import { Chip } from '@/src/components/ui/ModulePrimitives';
@@ -21,13 +22,17 @@ import { EmptyView, ErrorRetryView, LoadingView } from '@/src/components/ui/Stat
 import { apiErrorMessage } from '@/src/services/apiError';
 import { useGetAllDevicesQuery } from '@/src/services/devicesApi';
 import {
+  useAcknowledgeAiEventMutation,
   useGetAiEventsQuery,
   useGetAiDashboardSummaryQuery,
   useGetFleetMaintenanceQuery,
-  useGetDriverScoreQuery,
+  useGetDriverScoreboardQuery,
+  useSubmitAiFeedbackMutation,
   type AiEventDto,
+  type DriverScoreDto,
   type EventChatContextDto,
 } from '@/src/services/aiApi';
+import { useAiEventStream } from '@/src/services/useAiEventStream';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { radius, spacing, typography, type ThemeColors } from '@/src/theme/tokens';
 
@@ -63,9 +68,16 @@ export function AiCommandCentrePanel({ onClose }: { onClose?: () => void }) {
   const summary = useGetAiDashboardSummaryQuery();
   const events = useGetAiEventsQuery(severity === 'ALL' ? { size: 50 } : { severity, size: 50 });
 
+  // Live AI alerts. The hook shares one SSE connection per signed-in session
+  // and invalidates the event cache, so this list stays current without polling
+  // and without opening a second stream.
+  const stream = useAiEventStream();
+
   const devicesQuery = useGetAllDevicesQuery(undefined, { skip: activeMetric !== 'Active' });
   const maintenanceQuery = useGetFleetMaintenanceQuery(undefined, { skip: activeMetric !== 'Maint. risk' });
-  const driverQuery = useGetDriverScoreQuery(1, { skip: activeMetric !== 'Risky drivers' });
+  // Every driver in the tenant, so the user picks one instead of the screen
+  // hard-coding driver #1.
+  const driverQuery = useGetDriverScoreboardQuery(undefined, { skip: activeMetric !== 'Risky drivers' });
 
   if (activeContext) {
     return <EventAiConversation context={activeContext} onBack={() => setActiveContext(null)} />;
@@ -163,8 +175,25 @@ export function AiCommandCentrePanel({ onClose }: { onClose?: () => void }) {
             ))}
           </View>
 
+          <DemoDataBanner />
+
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>AI Events</Text>
+            <View style={styles.streamStatus}>
+              <View
+                style={[
+                  styles.streamDot,
+                  { backgroundColor: stream.connected ? stateColors.RUNNING : c.textMuted },
+                ]}
+              />
+              <Text style={styles.streamText}>
+                {stream.connected
+                  ? `Live${stream.unreadCount > 0 ? ` · ${stream.unreadCount} new` : ''}`
+                  : stream.status === 'CONNECTING'
+                    ? 'Connecting…'
+                    : 'Offline'}
+              </Text>
+            </View>
           </View>
           <View style={styles.filters}>
             {SEVERITIES.map((sv) => (
@@ -201,13 +230,31 @@ function EventRow({
   severityColor,
   event,
   onAsk,
+  onNavigate,
 }: {
   styles: ReturnType<typeof makeStyles>;
   colors: ThemeColors;
   severityColor: string;
   event: AiEventDto;
   onAsk: () => void;
+  onNavigate?: () => void;
 }) {
+  const [acknowledge, { isLoading: acknowledging }] = useAcknowledgeAiEventMutation();
+  const [submitFeedback] = useSubmitAiFeedbackMutation();
+  const [feedbackSent, setFeedbackSent] = useState<'up' | 'down' | null>(null);
+
+  const sendFeedback = async (isCorrect: boolean) => {
+    setFeedbackSent(isCorrect ? 'up' : 'down');
+    try {
+      await submitFeedback({ aiEventId: event.id, featureType: 'AI_EVENT', isCorrect }).unwrap();
+    } catch {
+      // Feedback is advisory; a failure must not disrupt the alert list.
+      setFeedbackSent(null);
+    }
+  };
+
+  const occurrences = event.occurrenceCount ?? 1;
+
   return (
     <View style={styles.eventCard}>
       <View style={[styles.eventBar, { backgroundColor: severityColor }]} />
@@ -224,9 +271,61 @@ function EventRow({
           {event.explanation ?? 'AI-detected anomaly'}
         </Text>
         <Text style={styles.eventMeta}>
-          {event.vehicleName ?? `Vehicle #${event.vehicleId ?? '—'}`} · score {safeScore(event.score)} ·{' '}
-          {formatTime(event.createdAt)}
+          {event.vehicleName ?? `Vehicle #${event.vehicleId ?? '—'}`} · score {safeScore(event.score)}
+          {occurrences > 1 ? ` · seen ${occurrences}x` : ''} ·{' '}
+          {formatTime(event.lastObservedAt ?? event.createdAt)}
         </Text>
+        {event.speedLimitSource ? (
+          <Text style={styles.eventMeta}>
+            Limit {event.speedLimitKph?.toFixed(0) ?? '—'} km/h ({formatType(event.speedLimitSource)})
+          </Text>
+        ) : null}
+        <View style={styles.eventActions}>
+          <AiStatusBadge source={event.source === 'RULE' ? 'RULE' : 'MODEL'} compact />
+          {!event.acknowledged ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Acknowledge event ${event.id}`}
+              disabled={acknowledging}
+              onPress={() => acknowledge(event.id)}
+              style={styles.smallAction}>
+              <Text style={styles.smallActionText}>{acknowledging ? '…' : 'Acknowledge'}</Text>
+            </Pressable>
+          ) : (
+            <Text style={styles.ackedText}>Acknowledged</Text>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Mark event ${event.id} as correct`}
+            onPress={() => sendFeedback(true)}
+            style={styles.iconAction}>
+            <MaterialCommunityIcons
+              name="thumb-up-outline"
+              size={14}
+              color={feedbackSent === 'up' ? c.primary : c.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Mark event ${event.id} as incorrect`}
+            onPress={() => sendFeedback(false)}
+            style={styles.iconAction}>
+            <MaterialCommunityIcons
+              name="thumb-down-outline"
+              size={14}
+              color={feedbackSent === 'down' ? c.danger : c.textMuted}
+            />
+          </Pressable>
+          {onNavigate && event.latitude != null && event.longitude != null ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Show event ${event.id} on the map`}
+              onPress={onNavigate}
+              style={styles.iconAction}>
+              <MaterialCommunityIcons name="map-marker-outline" size={14} color={c.info} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
       <Pressable
         accessibilityLabel={`Ask AI about event ${event.id}`}
@@ -322,6 +421,8 @@ function MetricDetailView({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'RUNNING' | 'IDLE' | 'OFFLINE'>('ALL');
+  // The driver the operator picked. Never a hard-coded id.
+  const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null);
 
   let data: any[] = [];
   let isLoading = false;
@@ -354,11 +455,12 @@ function MetricDetailView({
     errorMsg = apiErrorMessage(maintenanceQuery.error);
     data = maintenanceQuery.data ?? [];
   } else if (metric === 'Risky drivers') {
-    title = 'Risky Drivers';
+    title = 'Driver Scores';
     isLoading = driverQuery.isLoading;
     isError = driverQuery.isError;
     errorMsg = apiErrorMessage(driverQuery.error);
-    data = driverQuery.data ? [driverQuery.data] : [];
+    // The full tenant scoreboard, not one hard-coded driver.
+    data = driverQuery.data ?? [];
   } else if (metric === 'Deviations') {
     title = 'Route Deviations';
     isLoading = eventsQuery.isLoading;
@@ -464,11 +566,23 @@ function MetricDetailView({
           />
         }
         ListEmptyComponent={
-          <EmptyView
-            icon="clipboard-text-outline"
-            title="No records found"
-            message={`No current records match ${title.toLowerCase()}.`}
-          />
+          metric === 'Risky drivers' ? (
+            <NoDataYetView
+              title="No driver scores yet"
+              message="Scores appear once the nightly job has processed completed trips."
+            />
+          ) : metric === 'Maint. risk' ? (
+            <NoDataYetView
+              title="No maintenance predictions yet"
+              message="Predictions appear once vehicles report odometer or engine-hour data."
+            />
+          ) : (
+            <EmptyView
+              icon="clipboard-text-outline"
+              title="No records found"
+              message={`No current records match ${title.toLowerCase()}.`}
+            />
+          )
         }
         renderItem={({ item }) => {
           if (metric === 'Active') {
@@ -516,25 +630,77 @@ function MetricDetailView({
                 </View>
                 <Text style={styles.cardDesc}>{item.reasoning || 'No details available'}</Text>
                 <Text style={styles.cardMeta}>
-                  {item.predictedDaysRemaining != null ? `~${item.predictedDaysRemaining} days remaining` : 'Immediate service recommended'}
+                  {item.predictedComponent ? `${formatType(item.predictedComponent)} · ` : ''}
+                  {item.predictedDaysRemaining != null
+                    ? `~${item.predictedDaysRemaining} days remaining`
+                    : 'Immediate service recommended'}
+                  {item.remainingKm ? ` · ${Math.round(item.remainingKm)} km to service` : ''}
                 </Text>
+                <View style={styles.eventActions}>
+                  <AiStatusBadge source={item.source} compact />
+                  <Text style={styles.cardTime}>
+                    {item.confidence != null ? `Confidence ${(item.confidence * 100).toFixed(0)}% · ` : ''}
+                    Evaluated {formatTime(item.evaluatedAt)}
+                  </Text>
+                </View>
               </View>
             );
           }
           if (metric === 'Risky drivers') {
-            return (
-              <View style={styles.detailCard}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>{item.driverName}</Text>
-                  <View style={[styles.badge, { backgroundColor: `${c.danger}22`, borderColor: `${c.danger}55` }]}>
-                    <Text style={[styles.badgeText, { color: c.danger }]}>Score {item.score}/100</Text>
+            const driver = item as DriverScoreDto;
+            const selected = selectedDriverId === driver.driverId;
+            // A driver with no scored trips is shown as "no score yet" rather
+            // than with a flattering default.
+            if (!driver.hasScore) {
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select driver ${driver.driverName}`}
+                  onPress={() => setSelectedDriverId(driver.driverId)}
+                  style={[styles.detailCard, selected && { borderColor: c.primary }]}>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardTitle}>{driver.driverName}</Text>
+                    <Text style={styles.cardMeta}>No score yet</Text>
                   </View>
+                  <Text style={styles.cardDesc}>{driver.aiCoachingAdvice}</Text>
+                </Pressable>
+              );
+            }
+            const riskColor =
+              driver.riskLevel === 'CRITICAL' || driver.riskLevel === 'HIGH'
+                ? c.danger
+                : driver.riskLevel === 'MEDIUM'
+                  ? c.warningOrange
+                  : c.primary;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Select driver ${driver.driverName}`}
+                onPress={() => setSelectedDriverId(driver.driverId)}
+                style={[styles.detailCard, selected && { borderColor: c.primary }]}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle}>{driver.driverName}</Text>
+                  <Text style={[styles.driverScoreValue, { color: riskColor }]}>
+                    {driver.overallScore.toFixed(0)}
+                  </Text>
                 </View>
-                <Text style={styles.cardDesc}>Driver exhibits elevated safety risk trends (e.g. harsh braking or speeding events).</Text>
+                <Text style={styles.cardDesc}>{driver.aiCoachingAdvice}</Text>
                 <Text style={styles.cardMeta}>
-                  Unacknowledged alerts: {item.unacknowledgedAlerts} · Rank: #{item.rank}
+                  Safety {driver.safetyScore.toFixed(0)} · Compliance {driver.complianceScore.toFixed(0)} ·
+                  Efficiency {driver.efficiencyScore.toFixed(0)}
                 </Text>
-              </View>
+                <Text style={styles.cardMeta}>
+                  Contributing: {driver.harshBrakeCount} harsh brake(s), {driver.harshAccelCount} harsh
+                  accel, {Math.round(driver.speedingSeconds / 60)} min speeding, {driver.anomaliesCount}{' '}
+                  anomaly/ies
+                </Text>
+                <View style={styles.eventActions}>
+                  <AiStatusBadge source={driver.source} compact />
+                  <Text style={styles.cardTime}>
+                    Last calculated {formatTime(driver.calculatedAt ?? driver.scoreDate)}
+                  </Text>
+                </View>
+              </Pressable>
             );
           }
           return (
@@ -586,7 +752,12 @@ const makeStyles = (c: ThemeColors) =>
     },
     metricValue: { fontSize: typography.h2, fontWeight: '800', fontVariant: ['tabular-nums'] },
     metricLabel: { color: c.textSecondary, fontSize: 11, textAlign: 'center' },
-    sectionHeader: { marginTop: spacing.sm },
+    sectionHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: spacing.sm,
+    },
     sectionTitle: { color: c.textPrimary, fontSize: typography.title, fontWeight: '900' },
     filters: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     eventCard: {
@@ -618,6 +789,28 @@ const makeStyles = (c: ThemeColors) =>
       width: 46,
     },
     askText: { color: c.primary, fontSize: typography.caption, fontWeight: '800' },
+    eventActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+      marginTop: 4,
+    },
+    smallAction: {
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      borderWidth: StyleSheet.hairlineWidth * 2,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+    },
+    smallActionText: { color: c.textSecondary, fontSize: 10, fontWeight: '800' },
+    ackedText: { color: c.textMuted, fontSize: 10, fontWeight: '700' },
+    iconAction: { padding: 4 },
+    streamStatus: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+    streamDot: { borderRadius: 4, height: 8, width: 8 },
+    streamText: { color: c.textSecondary, fontSize: 10, fontWeight: '700' },
+    driverPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
+    driverScoreValue: { fontSize: typography.h2, fontWeight: '900', fontVariant: ['tabular-nums'] },
     detailHeader: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -288,6 +288,14 @@ export default function AppLayout() {
           }}
         />
         <Tabs.Screen
+          name="ai-tools"
+          options={{
+            href: null,
+            title: 'AI Tools',
+            headerLeft: () => <HeaderBackButton />,
+          }}
+        />
+        <Tabs.Screen
           name="commands"
           options={{
             href: null,

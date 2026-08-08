@@ -489,7 +489,7 @@ export default function GeofencesScreen() {
     if (approvingId != null || !Number.isSafeInteger(id) || id <= 0) return;
     setApprovingId(id);
     try {
-      const created = await approveSuggestion(id).unwrap();
+      const created = await approveSuggestion({ id }).unwrap();
       await Promise.allSettled([refetch(), refetchAi()]);
       const name = created?.name || 'Suggested geofence';
       Alert.alert('Geofence created', `"${name}" has been approved and added to your active geofences.`);

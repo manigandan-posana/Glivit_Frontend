@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "vehiclemoment",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "bundleIdentifier": "com.vehiclemoment.tracker",
       "supportsTablet": true,

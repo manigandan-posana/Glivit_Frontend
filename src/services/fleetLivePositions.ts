@@ -48,8 +48,12 @@ const DEMO_STEP_MS = 1200;
 function makeTarget(v: DeviceSummary, previous?: FleetTarget): FleetTarget | null {
   if (v.latitude == null || v.longitude == null) return null;
   const snap = snapCoordinateToRoadSync(v.latitude, v.longitude, v.course);
-  const latitude = snap.snapped ? snap.latitude : v.latitude;
-  const longitude = snap.snapped ? snap.longitude : v.longitude;
+  let latitude = snap.snapped ? snap.latitude : v.latitude;
+  let longitude = snap.snapped ? snap.longitude : v.longitude;
+  if (!snap.snapped && previous) {
+    latitude = previous.latitude;
+    longitude = previous.longitude;
+  }
   return {
     deviceId: v.id,
     latitude,
@@ -154,8 +158,12 @@ export function useFleetLivePositions(seed: DeviceSummary[], enabled = true): Fl
         const existed = previous != null;
         const state = event.state ?? previous?.state ?? 'NO_DATA';
         const snap = snapCoordinateToRoadSync(event.latitude, event.longitude, event.course);
-        const latitude = snap.snapped ? snap.latitude : event.latitude;
-        const longitude = snap.snapped ? snap.longitude : event.longitude;
+        let latitude = snap.snapped ? snap.latitude : event.latitude;
+        let longitude = snap.snapped ? snap.longitude : event.longitude;
+        if (!snap.snapped && previous) {
+          latitude = previous.latitude;
+          longitude = previous.longitude;
+        }
         map.set(event.deviceId, {
           deviceId: event.deviceId,
           latitude,
